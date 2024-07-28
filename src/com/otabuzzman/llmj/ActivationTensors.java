@@ -27,6 +27,8 @@ public class ActivationTensors {
     public int probs; // (B, T, V)
     public int losses; // (B, T)
 
+    private final int count;
+
     public ActivationTensors(GPT2Config config, int B, int T, int C, int L, int NH) {
         int Vp = config.padded_vocab_size;
         encoded = B * T * C; // encoded
@@ -52,5 +54,11 @@ public class ActivationTensors {
         logits = B * T * Vp; // logits
         probs = B * T * Vp; // probs
         losses = B * T; // losses
+
+        count = encoded + ln1 + ln1_mean + ln1_rstd + qkv + atty + preatt + att + attproj + residual2 + ln2 + ln2_mean + ln2_rstd + fch + fch_gelu + fcproj + residual3 + lnf + lnf_mean + lnf_rstd + logits + probs + losses;
+    }
+
+    public int count() {
+        return count;
     }
 }

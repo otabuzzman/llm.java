@@ -20,6 +20,8 @@ public class ParameterTensors {
     public int lnfw; // (C)
     public int lnfb; // (C)
 
+    private final int count;
+
     // llm.c: fill_in_parameter_sizes()
     public ParameterTensors(GPT2Config config) {
         int Vp = config.padded_vocab_size;
@@ -36,11 +38,17 @@ public class ParameterTensors {
         attprojb = L * C; // attprojb
         ln2w = L * C; // ln2w
         ln2b = L * C; // ln2b
-        fcw  = L * (4 * C) * C; // fcw
-        fcb  = L * (4 * C); // fcb
+        fcw = L * (4 * C) * C; // fcw
+        fcb = L * (4 * C); // fcb
         fcprojw = L * C * (4 * C); // fcprojw
         fcprojb = L * C; // fcprojb
-        lnfw  = C; // lnfw
-        lnfb  = C; // lnfb
+        lnfw = C; // lnfw
+        lnfb = C; // lnfb
+
+        count = wte + wpe + ln1w + ln1b + qkvw + qkvb + attprojw + attprojb + ln2w + ln2b + fcw + fcb + fcprojw + fcprojb + lnfw + lnfb;
+    }
+
+    public int count() {
+        return count;
     }
 }

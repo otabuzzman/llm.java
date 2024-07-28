@@ -16,10 +16,10 @@ import java.rmi.UnexpectedException;
 
 public class Tokenizer {
 
-    private int vocab_size = 0;
-    private String[] token_table;
-    private boolean init_ok = false;
-    private int eot_token = 0; // <|endoftext|> token id
+    int vocab_size = 0;
+    String[] token_table;
+    boolean init_ok = false;
+    int eot_token = 0; // <|endoftext|> token id
 
     public Tokenizer(String filename) throws FileNotFoundException, IOException, UnexpectedException  {
         RandomAccessFile file = new RandomAccessFile(filename, "r");

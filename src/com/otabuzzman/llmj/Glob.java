@@ -16,7 +16,7 @@ import java.util.List;
 
 public class Glob {
 
-    private List<String> gl_pathv = new ArrayList<String>();
+    private final List<String> gl_pathv = new ArrayList<String>();
 
     public Glob(String pattern, String path) throws IOException {
         try { // 1st check path/pattern for existence

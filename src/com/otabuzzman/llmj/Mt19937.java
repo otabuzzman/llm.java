@@ -84,17 +84,17 @@
 
 public class Mt19937 {
 
-    private static int MERSENNE_STATE_M = 397;
-    private static int MERSENNE_STATE_N = 624;
+    final static int MERSENNE_STATE_M = 397;
+    final static int MERSENNE_STATE_N = 624;
 
-    private static int LMASK = 0x7fffffff;
-    private static int UMASK = 0x80000000;
+    final static int LMASK = 0x7fffffff;
+    final static int UMASK = 0x80000000;
     
     // private long seed;
-    private int left; 
-    private int next; 
-    private int[] state = new int[MERSENNE_STATE_N];
-    private int[] MATRIX_A = new int[2];
+    int left; 
+    int next; 
+    int[] state = new int[MERSENNE_STATE_N];
+    int[] MATRIX_A = new int[2];
 
     public void manual_seed(int seed) {
          MATRIX_A[0] = 0x0;

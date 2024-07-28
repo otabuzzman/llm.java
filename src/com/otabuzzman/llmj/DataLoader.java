@@ -13,40 +13,40 @@ import java.rmi.UnexpectedException;
 
 public class DataLoader {
 
-    private static int HEADER_SIZE = 256;
+    private final static int HEADER_SIZE = 256;
 
         // variables related to distributed training
     // each process/worker has to access different parts of the data
-    private int process_rank = 0;
-    private int num_processes = 0;
+    int process_rank = 0;
+    int num_processes = 0;
     // batch and token information
-    private int B = 0; // batch size
-    private int T = 0; // sequence length
-    private long num_tokens = 0; // total number of tokens
-    private int shard_num_samples = 0;  // total number of samples in the current shard per process
+    int B = 0; // batch size
+    int T = 0; // sequence length
+    long num_tokens = 0; // total number of tokens
+    int shard_num_samples = 0;  // total number of samples in the current shard per process
     // shards and current position
-    private Glob glob_result; // stores the result of glob, for all shards we want to iterate
-    private int current_shard_idx = 0; // the current shard we are reading from
-    private int current_sample_idx = 0; // the current sample we are reading from
+    Glob glob_result; // stores the result of glob, for all shards we want to iterate
+    int current_shard_idx = 0; // the current shard we are reading from
+    int current_sample_idx = 0; // the current sample we are reading from
     // file handle
-    private RandomAccessFile tokens_file = null;
+    RandomAccessFile tokens_file = null;
     // data buffers
     // we fread data from file into this buffer
-    private short[] buffer;
+    short[] buffer;
     // input tokens into transformer
-    private int[] inputs;
+    int[] inputs;
     // target tokens for the transformer
-    private int[] targets;
+    int[] targets;
     // random shuffle related variables
     Mt19937 shuffle_rng;
-    private boolean should_shuffle = false;
-    private int[] shard_indices;
-    private int[] intra_shard_indices = null;
+    boolean should_shuffle = false;
+    int[] shard_indices;
+    int[] intra_shard_indices = null;
     // sizes in bytes
-    private int total_batch_size_bytes = 0;
-    private int local_batch_offset_bytes = 0;
-    private int header_bytes = 0;
-    private long file_size_bytes = 0;
+    int total_batch_size_bytes = 0;
+    int local_batch_offset_bytes = 0;
+    int header_bytes = 0;
+    long file_size_bytes = 0;
 
     public DataLoader(String filename_pattern, int B, int T, int process_rank, int num_processes, boolean should_shuffle) throws IOException, UnexpectedException {
         this.process_rank = process_rank;

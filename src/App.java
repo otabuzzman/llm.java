@@ -1,4 +1,5 @@
 import com.otabuzzman.llmj.DataLoader;
+import com.otabuzzman.llmj.GPT2;
 import com.otabuzzman.llmj.Glob;
 import com.otabuzzman.llmj.Mt19937;
 import com.otabuzzman.llmj.Tokenizer;
@@ -12,6 +13,7 @@ public class App {
         }
         Mt19937.test_Mt19937();
         DataLoader loader = new DataLoader("tiny_shakespeare_train.bin", 4, 64, 0, 1, true);
+        GPT2 gpt2 = new GPT2("gpt2_124M.bin");
         System.out.println("Hello, World!");
     }
 }
