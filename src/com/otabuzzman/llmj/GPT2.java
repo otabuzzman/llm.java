@@ -70,15 +70,11 @@ public class GPT2 {
         System.out.println("num_parameters: " + num_parameters);
 
         // read in all the parameters from file
-        //params_memory = FloatBuffer.allocate(num_parameters);
         ByteBuffer params_memory = ByteBuffer.allocate(num_parameters * 4 /*sizeof(float)*/);
         model_file.getChannel().read(params_memory);
         params_memory.order(ByteOrder.LITTLE_ENDIAN);
-        params_memory.flip();
+        params_memory.flip(); // apply byte order
         this.params_memory = params_memory.asFloatBuffer();
-        //for (int i = 0; i < num_parameters; i++) {
-        //    params_memory.put(i, Float.intBitsToFloat(Integer.reverseBytes(model_file. readInt())));
-        //}
         model_file.close();
 
         // other inits
@@ -92,10 +88,5 @@ public class GPT2 {
         batch_size = 0;
         seq_len = 0;
         mean_loss = -1.0f; // -1.0f will designate no loss
-
-        for ( int i=0 ; i < 16 ; i++) {
-            System.out.println(this.params_memory.get(i));
-        }
-
     }
 }
