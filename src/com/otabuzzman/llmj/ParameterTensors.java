@@ -22,7 +22,7 @@ public class ParameterTensors {
 
     private final int count;
 
-    // llm.c: fill_in_parameter_sizes()
+    // llm.c: fill_in_parameter_sizes(...)
     public ParameterTensors(GPT2Config config) {
         int Vp = config.padded_vocab_size;
         int C = config.channels;

@@ -1,3 +1,13 @@
+/*
+ This file trains the GPT-2 model.
+ This version is the clean, minimal, reference. As such:
+ - it runs on CPU.
+ - it does not make the code too complex; it is readable.
+ - it does not use any processor-specific instructions, intrinsics and such.
+ - it _does_ use a few OpenMP pragmas because this is a large speedup at very low cost
+ There will be other versions of this code that specialize it and make it fast.
+ */
+
 package com.otabuzzman.llmj;
 
 import java.io.FileNotFoundException;
@@ -36,6 +46,9 @@ public class GPT2 {
     IntBuffer targets; // the target tokens for the current forward pass
     float mean_loss; // after a forward pass with targets, will be populated with the mean loss
 
+    private final static float GELU_SCALING_FACTOR = (float) Math.sqrt(2.0f / Math.PI);
+
+    // llm.c: gpt2_build_from_checkpoint(...)
     public GPT2(String checkpoint_path) throws FileNotFoundException, IOException {
         RandomAccessFile model_file = new RandomAccessFile(checkpoint_path, "r");
         int[] model_header = new int[256];
@@ -88,5 +101,66 @@ public class GPT2 {
         batch_size = 0;
         seq_len = 0;
         mean_loss = -1.0f; // -1.0f will designate no loss
+    }
+
+    // -----------------------------------------------------------------
+    // all the individual layers' forward and backward passes
+    // B = batch_size, T = sequence_length, C = channels, V = vocab_size
+
+    public void encoder_forward(int out, int inp, int wte, int wpe, int B, int T, int C) {
+    }
+
+    public void encoder_backward(int dwte, int dwpe, int dout, int inp, int B, int T, int C) {
+    }
+
+    public void layernorm_forward(int out, int mean, int rstd, int inp, int weight, int bias, int B, int T, int C) {
+    }
+
+    public void layernorm_backward(int dinp, int dweight, int dbias, int dout, int inp, int weight, int mean, int rstd, int B, int T, int C) {
+    }
+
+    public void matmul_forward_naive(int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
+    }
+
+    public void matmul_forward(int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
+    }
+
+    public void matmul_backward(int dinp, int dweight, int dbias, int dout, int inp, int weight, int B, int T, int C, int OC) {
+    }
+
+    public void attention_forward(int out, int preatt, int att, int inp, int B, int T, int C, int NH) {
+    }
+
+    public void attention_backward(int dinp, int dpreatt, int datt, int dout, int inp, int att, int B, int T, int C, int NH) {
+    }
+
+    public void gelu_forward(int out, int inp, int N) {
+    }
+
+    // we want to use -Ofast optimization, but sadly GeLU breaks, so disable this flag just for it (#168)
+    // #pragma float_control(precise, on, push)
+    // #if defined(__GNUC__) && !defined(__clang__)
+    // __attribute__((optimize("no-finite-math-only")))
+    // #endif
+    public void gelu_backward(int dinp, int inp, int dout, int N) {
+    }
+    // #pragma float_control(pop)
+
+    public void residual_forward(int out, int inp1, int inp2, int N) {
+    }
+
+    public void residual_backward(int dinp1, int dinp2, int dout, int inp2, int N) {
+    }
+
+    public void softmax_forward(int probs, int logits, int B, int T, int V, int Vp) {
+    }
+
+    public void softmax_backward(int losses, int probs, int targets, int B, int T, int Vp) {
+    }
+
+    public void crossentropy_forward(int losses, int probs, int targets, int B, int T, int Vp) {
+    }
+
+    public void crossentropy_softmax_backward(int dlogits, int dlosses, int probs, int targets, int B, int T, int V, int Vp) {
     }
 }
