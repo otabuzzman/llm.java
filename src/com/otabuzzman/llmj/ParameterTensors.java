@@ -3,24 +3,25 @@ package com.otabuzzman.llmj;
 public class ParameterTensors {
     public final static int NUM_PARAMETER_TENSORS = 16;
 
-    public int wte; // (V, C)
-    public int wpe; // (maxT, C)
-    public int ln1w; // (L, C)
-    public int ln1b; // (L, C)
-    public int qkvw; // (L, 3*C, C)
-    public int qkvb; // (L, 3*C)
-    public int attprojw; // (L, C, C)
-    public int attprojb; // (L, C)
-    public int ln2w; // (L, C)
-    public int ln2b; // (L, C)
-    public int fcw; // (L, 4*C, C)
-    public int fcb; // (L, 4*C)
-    public int fcprojw; // (L, C, 4*C)
-    public int fcprojb; // (L, C)
-    public int lnfw; // (C)
-    public int lnfb; // (C)
+    public final int wte; // (V, C)
+    public final int wpe; // (maxT, C)
+    public final int ln1w; // (L, C)
+    public final int ln1b; // (L, C)
+    public final int qkvw; // (L, 3*C, C)
+    public final int qkvb; // (L, 3*C)
+    public final int attprojw; // (L, C, C)
+    public final int attprojb; // (L, C)
+    public final int ln2w; // (L, C)
+    public final int ln2b; // (L, C)
+    public final int fcw; // (L, 4*C, C)
+    public final int fcb; // (L, 4*C)
+    public final int fcprojw; // (L, C, 4*C)
+    public final int fcprojb; // (L, C)
+    public final int lnfw; // (C)
+    public final int lnfb; // (C)
 
-    private final int count;
+    public final int[] array;
+    public final int count;
 
     // llm.c: fill_in_parameter_sizes(...)
     public ParameterTensors(GPT2Config config) {
@@ -45,10 +46,7 @@ public class ParameterTensors {
         lnfw = C; // lnfw
         lnfb = C; // lnfb
 
+        array = new int[] { wte, wpe, ln1w, ln1b, qkvw, qkvb, attprojw, attprojb, ln2w, ln2b, fcw, fcb, fcprojw, fcprojb, lnfw, lnfb };
         count = wte + wpe + ln1w + ln1b + qkvw + qkvb + attprojw + attprojb + ln2w + ln2b + fcw + fcb + fcprojw + fcprojb + lnfw + lnfb;
-    }
-
-    public int count() {
-        return count;
     }
 }

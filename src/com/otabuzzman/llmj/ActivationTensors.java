@@ -3,31 +3,32 @@ package com.otabuzzman.llmj;
 public class ActivationTensors {
     public final static int NUM_ACTIVATION_TENSORS = 23;
 
-    public int encoded; // (B, T, C)
-    public int ln1; // (L, B, T, C)
-    public int ln1_mean; // (L, B, T)
-    public int ln1_rstd; // (L, B, T)
-    public int qkv; // (L, B, T, 3*C)
-    public int atty; // (L, B, T, C)
-    public int preatt; // (L, B, NH, T, T)
-    public int att; // (L, B, NH, T, T)
-    public int attproj; // (L, B, T, C)
-    public int residual2; // (L, B, T, C)
-    public int ln2; // (L, B, T, C)
-    public int ln2_mean; // (L, B, T)
-    public int ln2_rstd; // (L, B, T)
-    public int fch; // (L, B, T, 4*C)
-    public int fch_gelu; // (L, B, T, 4*C)
-    public int fcproj; // (L, B, T, C)
-    public int residual3; // (L, B, T, C)
-    public int lnf; // (B, T, C)
-    public int lnf_mean; // (B, T)
-    public int lnf_rstd; // (B, T)
-    public int logits; // (B, T, V)
-    public int probs; // (B, T, V)
-    public int losses; // (B, T)
+    public final int encoded; // (B, T, C)
+    public final int ln1; // (L, B, T, C)
+    public final int ln1_mean; // (L, B, T)
+    public final int ln1_rstd; // (L, B, T)
+    public final int qkv; // (L, B, T, 3*C)
+    public final int atty; // (L, B, T, C)
+    public final int preatt; // (L, B, NH, T, T)
+    public final int att; // (L, B, NH, T, T)
+    public final int attproj; // (L, B, T, C)
+    public final int residual2; // (L, B, T, C)
+    public final int ln2; // (L, B, T, C)
+    public final int ln2_mean; // (L, B, T)
+    public final int ln2_rstd; // (L, B, T)
+    public final int fch; // (L, B, T, 4*C)
+    public final int fch_gelu; // (L, B, T, 4*C)
+    public final int fcproj; // (L, B, T, C)
+    public final int residual3; // (L, B, T, C)
+    public final int lnf; // (B, T, C)
+    public final int lnf_mean; // (B, T)
+    public final int lnf_rstd; // (B, T)
+    public final int logits; // (B, T, V)
+    public final int probs; // (B, T, V)
+    public final int losses; // (B, T)
 
-    private final int count;
+    public final int[] array;
+    public final int count;
 
     public ActivationTensors(GPT2Config config, int B, int T, int C, int L, int NH) {
         int Vp = config.padded_vocab_size;
@@ -55,10 +56,7 @@ public class ActivationTensors {
         probs = B * T * Vp; // probs
         losses = B * T; // losses
 
+        array = new int[] { encoded, ln1, ln1_mean, ln1_rstd, qkv, atty, preatt, att, attproj, residual2, ln2, ln2_mean, ln2_rstd, fch, fch_gelu, fcproj, residual3, lnf, lnf_mean, lnf_rstd, logits, probs, losses };
         count = encoded + ln1 + ln1_mean + ln1_rstd + qkv + atty + preatt + att + attproj + residual2 + ln2 + ln2_mean + ln2_rstd + fch + fch_gelu + fcproj + residual3 + lnf + lnf_mean + lnf_rstd + logits + probs + losses;
-    }
-
-    public int count() {
-        return count;
     }
 }

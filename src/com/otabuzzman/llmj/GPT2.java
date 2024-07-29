@@ -17,12 +17,14 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
+import java.util.Arrays;
+import java.util.stream.IntStream;
 
 public class GPT2 {
     GPT2Config config;
     // the weights (parameters) of the model, and their sizes
     ParameterTensors params;
-    int[] param_sizes = new int[ParameterTensors.NUM_PARAMETER_TENSORS];
+    IntBuffer param_sizes;
     FloatBuffer params_memory;
     int num_parameters;
     // gradients of the weights
@@ -33,7 +35,7 @@ public class GPT2 {
     FloatBuffer v_memory;
     // the activations of the model, and their sizes
     ActivationTensors acts;
-    int[] act_sizes = new int[ActivationTensors.NUM_ACTIVATION_TENSORS];
+    IntBuffer act_sizes;
     FloatBuffer acts_memory;
     int num_activations;
     // gradients of the activations
@@ -77,9 +79,10 @@ public class GPT2 {
 
         // allocate space for all the parameters and read them in
         params = new ParameterTensors(config);
+        param_sizes = IntBuffer.wrap(params.array);
         
         // count the number of parameters
-        num_parameters = params.count();
+        num_parameters = params.count;
         System.out.println("num_parameters: " + num_parameters);
 
         // read in all the parameters from file
