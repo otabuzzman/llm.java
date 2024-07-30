@@ -98,24 +98,225 @@ public class GPT2 {
     // B = batch_size, T = sequence_length, C = channels, V = vocab_size
 
     public void encoder_forward(int out, int wte, int wpe, int B, int T, int C) {
+        // out is (B,T,C). At each position (b,t), a C-dimensional vector summarizing token & position
+        // inp is (B,T) of integers, holding the token ids at each (b,t) position
+        // wte is (V,C) of token embeddings, short for "weight token embeddings"
+        // wpe is (maxT,C) of position embeddings, short for "weight positional embedding"
+        for (int b = 0 ; b < B ; b++) {
+            for (int t = 0 ; t < T ; t++) {
+                // seek to the output position in out[b,t,:]
+                int out_bt = out + b * T * C + t * C;
+                // get the index of the token at inp[b, t]
+                int ix = inputs.get(b * T + t);
+                // seek to the position in wte corresponding to the token
+                int wte_ix = wte + ix * C;
+                // seek to the position in wpe corresponding to the position
+                int wpe_t = wpe + t * C;
+                // add the two vectors and store the result in out[b,t,:]
+                for (int i = 0 ; i < C ; i++) {
+                    acts_memory.put(out_bt + t, params_memory.get(wte_ix + i) + params_memory.get(wpe_t + i));
+                }
+            }
+        }
     }
 
     public void encoder_backward(int dwte, int dwpe, int dout, int B, int T, int C) {
+        for (int b = 0 ; b < B ; b++) {
+            for (int t = 0 ; t < T; t++) {
+                int dout_bt = dout + b * T * C + t * C;
+                int ix = inputs.get(b * T + t);
+                int dwte_ix = dwte + ix * C;
+                int dwpe_t = dwpe + t * C;
+                for (int i = 0 ; i < C ; i++) {
+                    float d = grads_acts_memory.get(dout_bt + i);
+                    grads_memory.put(dwte_ix + i, grads_memory.get(dwte_ix + i) + d);
+                    grads_memory.put(dwpe_t + i, grads_memory.get(dwpe_t + i) + d);
+                }
+            }
+        }
     }
 
     public void layernorm_forward(int out, int mean, int rstd, int weight, int inp, int bias, int B, int T, int C) {
+        // reference: https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html
+        // both inp and out are (B,T,C) of the activations
+        // mean and rstd are (B,T) buffers, to be used later in backward pass
+        // at each position (b,t) of the input, the C-dimensional vector
+        // of activations gets normalized, then scaled and shifted
+        float eps = 1e-5f;
+        for (int b = 0 ; b < B ; b++) {
+            for (int t = 0 ; t < T ; t++) {
+                // seek to the input position inp[b,t,:]
+                int x = inp + b * T * C + t * C;
+                // calculate the mean
+                float m = 0.0f;
+                for (int i = 0 ; i < C ; i++) {
+                    m += params_memory.get(x + i);
+                }
+                m = m/C;
+                // calculate the variance (without any bias correction)
+                float v = 0.0f;
+                for (int i = 0; i < C; i++) {
+                    float xshift = params_memory.get(x + i) - m;
+                    v += xshift * xshift;
+                }
+                v = v/C;
+                // calculate the rstd (reciprocal standard deviation)
+                float s = 1.0f / (float) Math.sqrt(v + eps);
+                // seek to the output position in out[b,t,:]
+                int out_bt = out + b * T * C + t * C;
+                for (int i = 0; i < C; i++) {
+                    float n = (s * (params_memory.get(x + i) - m)); // normalize
+                    float o = n * acts_memory.get(weight + i) + params_memory.get(bias + i); // scale and shift
+                    acts_memory.put(out_bt + i, o); // write
+                }
+                // cache the mean and rstd for the backward pass later
+                acts_memory.put(mean + b * T + t, m);
+                acts_memory.put(rstd + b * T + t, s);
+            }
+        }
     }
 
     public void layernorm_backward(int dinp, int dweight, int dbias, int dout, int inp, int weight, int mean, int rstd, int B, int T, int C) {
+        for (int b = 0; b < B; b++) {
+            for (int t = 0; t < T; t++) {
+                int dout_bt = dout + b * T * C + t * C;
+                int inp_bt = inp + b * T * C + t * C;
+                int dinp_bt = dinp + b * T * C + t * C;
+                float mean_bt = acts_memory.get(mean + b * T + t);
+                float rstd_bt = acts_memory.get(rstd + b * T + t);
+
+                // first: two reduce operations
+                float dnorm_mean = 0.0f;
+                float dnorm_norm_mean = 0.0f;
+                for (int i = 0; i < C; i++) {
+                    float norm_bti = (acts_memory.get(inp_bt + i) - mean_bt) * rstd_bt;
+                    float dnorm_i = params_memory.get(weight + i) * grads_acts_memory.get(dout_bt + i);
+                    dnorm_mean += dnorm_i;
+                    dnorm_norm_mean += dnorm_i * norm_bti;
+                }
+                dnorm_mean = dnorm_mean / C;
+                dnorm_norm_mean = dnorm_norm_mean / C;
+
+                // now iterate again and accumulate all the gradients
+                for (int i = 0; i < C; i++) {
+                    float norm_bti = (acts_memory.get(inp_bt + i) - mean_bt) * rstd_bt;
+                    float dnorm_i = params_memory.get(weight + i) * grads_acts_memory.get(dout_bt + i);
+                    // gradient contribution to bias
+                    grads_memory.put(dbias + i, grads_memory.get(dbias + i) + grads_acts_memory.get(dout_bt + i));
+                    // gradient contribution to weight
+                    grads_memory.put(dweight + i, grads_memory.get(dweight + i) + norm_bti * grads_acts_memory.get(dout_bt + i));
+                    // gradient contribution to input
+                    float dval = 0.0f;
+                    dval += dnorm_i; // term 1
+                    dval -= dnorm_mean; // term 2
+                    dval -= norm_bti * dnorm_norm_mean; // term 3
+                    dval *= rstd_bt; // final scale
+                    grads_acts_memory.put(dinp_bt + i, grads_acts_memory.get(dinp_bt + i) + dval);
+                }
+            }
+        }
     }
 
     public void matmul_forward_naive(int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
+        // the most naive implementation of matrix multiplication
+        // this serves as an algorithmic reference, and as a fallback for
+        // unfriendly input shapes inside matmul_forward(), below.
+        // #pragma omp parallel for collapse(2)
+        for (int b = 0 ; b < B ; b++) {
+            for (int t = 0 ; t < T ; t++) {
+                int bt = b * T + t;
+                for (int o = 0 ; o < OC ; o++) {
+                    float val = (bias != -1) ? params_memory.get(bias + o) : 0.0f;
+                    for (int i = 0 ; i < C ; i++) {
+                        val += acts_memory.get(inp + bt * C + i) * params_memory.get(weight + o * C + i);
+                    }
+                    acts_memory.put(out + bt * OC + o, val);
+                }
+            }
+        }
     }
 
     public void matmul_forward(int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
+        // most of the running time is spent here and in matmul_backward
+        // therefore, the implementation below is very mildly optimized
+        // this function is otherwise identical to that of matmul_forward_naive()
+        // OC is short for "output channels"
+        // inp is (B,T,C), weight is (OC, C), bias is (OC)
+        // out will be (B,T,OC)
+
+        // make sure the tiled loop will be correct or fallback to naive version
+        int LOOP_UNROLL = 8;
+        if (B * T % LOOP_UNROLL != 0) {
+            matmul_forward_naive(out, inp, weight, bias, B, T, C, OC);
+            return;
+        }
+
+        // collapse the B and T loops into one and turn it into a strided loop.
+        // then we can tile the inner loop, and reuse the loaded weight LOOP_UNROLL many times
+        // #pragma omp parallel for
+        for (int obt = 0; obt < B * T; obt += LOOP_UNROLL) {
+            for (int o = 0; o < OC; o++) {
+                // we'll keep LOOP_UNROLL many results in registers
+                float[] result = new float[LOOP_UNROLL];
+                // initialize the bias, if it exists
+                for (int ibt = 0; ibt < LOOP_UNROLL; ibt++) {
+                    result[ibt] = (bias != -1) ? params_memory.get(bias + o) : 0.0f;
+                }
+                // inner loops. Because we do LOOP_UNROLL steps of inner bt, we can cache
+                // the value of weight[i + o * C] and reuse it.
+                // we compile with -Ofast, so the compiler will turn the inner loop into FMAs
+                for (int i = 0; i < C; i++) {
+                    float w = params_memory.get(weight + i + o * C);
+                    for (int ibt = 0; ibt < LOOP_UNROLL; ibt++) {
+                        int bt = obt + ibt;
+                        result[ibt] += acts_memory.get(inp + bt * C + i) * w;
+                    }
+                }
+                // write back results to main memory
+                for (int ibt = 0; ibt < LOOP_UNROLL; ibt++) {
+                    int bt = obt + ibt;
+                    acts_memory.put(out + bt * OC + o, result[ibt]);
+                }
+            }
+        }
     }
 
     public void matmul_backward(int dinp, int dweight, int dbias, int dout, int inp, int weight, int B, int T, int C, int OC) {
+        // most of the running time is spent here and in matmul_forward
+        // this backward could be done in a single "round" of loops
+        // but that doesn't afford an efficient parallelization strategy
+
+        // backward into inp first, parallelize over B,T
+        // #pragma omp parallel for collapse(2)
+        for (int b = 0 ; b < B ; b++) {
+            for (int t = 0 ; t < T ; t++) {
+                int dout_bt = dout + b * T * OC + t * OC;
+                int dinp_bt = dinp + b * T * C + t * C;
+                for (int o = 0 ; o < OC ; o++) {
+                    int wrow = weight + o * C;
+                    float d = grads_acts_memory.get(dout_bt + o);
+                    for (int i = 0; i < C; i++) {
+                        grads_acts_memory.put(dinp_bt + i, grads_acts_memory.get(dinp_bt + i) + params_memory.get(wrow + i) * d);
+                    }
+                }
+            }
+        }
+        // backward into weight/bias, parallelize over output channels OC
+        // #pragma omp parallel for
+        for (int o = 0 ; o < OC ; o++) {
+            for (int b = 0 ; b < B ; b++) {
+                for (int t = 0 ; t < T ; t++) {
+                    int dout_bt = dout + b * T * OC + t * OC;
+                    int inp_bt = inp + b * T * C + t * C;
+                    int dwrow = dweight + o*C;
+                    float d = grads_acts_memory.get(dout_bt + o);
+                    if (dbias != -1) { grads_memory.put(dbias + o, grads_memory.get(dbias + o) + d); }
+                    for (int i = 0 ; i < C ; i++) {
+                        grads_memory.put(dwrow + i, grads_memory.get(dwrow + i) + acts_memory.get(inp_bt + i) * d);
+                    }
+                }
+            }
+        }
     }
 
     public void attention_forward(int out, int preatt, int att, int inp, int B, int T, int C, int NH) {
@@ -249,7 +450,7 @@ public class GPT2 {
         }
         residual = acts.residual3 + (L - 1) * B * T * C; // last residual is in residual3
         layernorm_forward(acts.lnf, acts.lnf_mean, acts.lnf_rstd, residual, params.lnfw, params.lnfb, B, T, C);
-        matmul_forward(acts.logits, acts.lnf, params.wte, 0, B, T, C, Vp);
+        matmul_forward(acts.logits, acts.lnf, params.wte, -1, B, T, C, Vp);
         softmax_forward(acts.probs, acts.logits, B, T, V, Vp);
 
         // also forward the cross-entropy loss function if we have the targets
@@ -302,7 +503,7 @@ public class GPT2 {
         for (int i = 0 ; i < B * T ; i++) { grads_acts_memory.put(acts.losses + i, dloss_mean); }
 
         crossentropy_softmax_backward(grads_acts.logits, grads_acts.losses, acts.probs, B, T, V, Vp);
-        matmul_backward(grads_acts.lnf, grads.wte, 0, grads_acts.logits, acts.lnf, params.wte, B, T, C, Vp);
+        matmul_backward(grads_acts.lnf, grads.wte, -1, grads_acts.logits, acts.lnf, params.wte, B, T, C, Vp);
         int residual = acts.residual3 + (L - 1) * B * T * C; // last layer's residual
         int dresidual = grads_acts.residual3 + (L - 1) * B * T * C; // write to last layer's residual
         layernorm_backward(dresidual, grads.lnfw, grads.lnfb, grads_acts.lnf, residual, params.lnfw, acts.lnf_mean, acts.lnf_rstd, B, T, C);
