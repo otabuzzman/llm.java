@@ -18,8 +18,8 @@ public class Tokenizer {
 
     int vocab_size = 0;
     String[] token_table;
-    boolean init_ok = false;
-    int eot_token = 0; // <|endoftext|> token id
+    public boolean init_ok = false;
+    public int eot_token = 0; // <|endoftext|> token id
 
     public Tokenizer(String filename) throws FileNotFoundException, IOException, UnexpectedException  {
         RandomAccessFile file = new RandomAccessFile(filename, "r");
@@ -52,7 +52,7 @@ public class Tokenizer {
         init_ok = true;
     }
 
-    String decode(int token_id) {
+    public String decode(int token_id) {
         if (!init_ok) { return null; }
         if (token_id < vocab_size) {
             return token_table[token_id];

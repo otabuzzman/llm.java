@@ -22,7 +22,7 @@ public class DataLoader {
     // batch and token information
     int B = 0; // batch size
     int T = 0; // sequence length
-    long num_tokens = 0; // total number of tokens
+    public long num_tokens = 0; // total number of tokens
     int shard_num_samples = 0;  // total number of samples in the current shard per process
     // shards and current position
     Glob glob_result; // stores the result of glob, for all shards we want to iterate
@@ -34,9 +34,9 @@ public class DataLoader {
     // we fread data from file into this buffer
     short[] buffer;
     // input tokens into transformer
-    int[] inputs;
+    public int[] inputs;
     // target tokens for the transformer
-    int[] targets;
+    public int[] targets;
     // random shuffle related variables
     Mt19937 shuffle_rng;
     boolean should_shuffle = false;
@@ -127,7 +127,7 @@ public class DataLoader {
         shard_num_samples = (ntok * 2 - 2 /*sizeof(short) - sizeof(short)*/) / total_batch_size_bytes;
         return ntok;
     }
-    
+
     private void prepare_intra_shard_indices() {
         // shuffle the examples inside the shards
         if (intra_shard_indices != null) {
@@ -138,46 +138,46 @@ public class DataLoader {
         shuffle_rng.init_identity_permutation(intra_shard_indices, shard_num_samples);
         shuffle_rng.random_permutation(intra_shard_indices, shard_num_samples);
     }
-    
+
     public void reset() throws FileNotFoundException, IOException, UnexpectedException {
         current_shard_idx = 0;
         current_sample_idx = 0;
-    
+
         if (should_shuffle) { // shuffle the shards
             shuffle_rng.random_permutation(shard_indices, glob_result.gl_pathc());
         }
-    
+
         load_shard(current_shard_idx);
-    
+
         if (should_shuffle) {
             prepare_intra_shard_indices();
         }
     }
-    
+
     private void advance() throws FileNotFoundException, IOException, UnexpectedException {
         if (current_shard_idx == glob_result.gl_pathc() - 1) {
             // if we are at the last shard, we reset the loader and start a new epoch
             reset();
             return;
         }
-    
+
         // advance the loader by loading the next data shard and resetting the position
         current_shard_idx = (current_shard_idx + 1) % glob_result.gl_pathc();
         current_sample_idx = 0;
         load_shard(current_shard_idx);
-    
+
         if (should_shuffle) {
             prepare_intra_shard_indices();
         }
     }
-    
+
     public void load_batch() throws IOException, UnexpectedException {
         if (should_shuffle && intra_shard_indices == null) { throw new UnexpectedException(null); } // no shards to shuffle
         if (current_sample_idx >= shard_num_samples) { throw new UnexpectedException(null); } // sample index out of bounds
         int idx = should_shuffle ? intra_shard_indices[current_sample_idx] : current_sample_idx;
         int global_batch_offset_bytes = idx * total_batch_size_bytes;
         long current_offset = header_bytes + global_batch_offset_bytes + local_batch_offset_bytes;
-    
+
         // read B*T+1 uint16_t tokens from the file into buffer
         tokens_file.seek(current_offset);
         for (int i = 0 ; i < B * T + 1 ; i++) {
@@ -189,7 +189,7 @@ public class DataLoader {
             targets[i] = (int) buffer[i+1];
         }
     }
-    
+
     public void next_batch() throws IOException, UnexpectedException {
         // if the next batch would go past the end of the file, advance the loader
         if (current_sample_idx >= shard_num_samples) {
@@ -198,7 +198,7 @@ public class DataLoader {
         load_batch();
         current_sample_idx += 1;
     }
-    
+
     public void resume(int current_shard_idx, int current_sample_idx) throws FileNotFoundException, IOException, UnexpectedException {
         // used during model resumption (-y 1) flag
         this.current_shard_idx = current_shard_idx;

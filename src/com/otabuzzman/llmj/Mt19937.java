@@ -89,7 +89,7 @@ public class Mt19937 {
 
     final static int LMASK = 0x7fffffff;
     final static int UMASK = 0x80000000;
-    
+
     // private long seed;
     int left; 
     int next; 
@@ -107,7 +107,7 @@ public class Mt19937 {
         left = 1;
         next = 0;
     }
-    
+
     public void next_state() {
         left = MERSENNE_STATE_N;
         next = 0;
@@ -123,7 +123,7 @@ public class Mt19937 {
         y = (state[MERSENNE_STATE_N - 1] & UMASK) | (state[0] & LMASK);
         state[MERSENNE_STATE_N - 1] = state[MERSENNE_STATE_M - 1] ^ (y >>> 1) ^ MATRIX_A[y & 0x1];
     }
- 
+
     public long randint32() { // return long due to Java's lack of unsigned int
         if (MATRIX_A[0] != 0 || MATRIX_A[1] != 0x9908b0df) manual_seed(5489); // auto-initialize
         if (--left <= 0) {
@@ -136,25 +136,25 @@ public class Mt19937 {
         y ^= y >>> 18;
        return (long) ((y <= 0) ? y + 0x100000000L : y);
     }
-    
+
     public long randint64() {
         return (((randint32()) << 32) | randint32());
     }
-    
+
     public float randfloat32() {
         return (randint32() & ((1l << 24) - 1)) * (1.0f / (1l << 24));
     }
-    
+
     public double randfloat64() {
         return (randint64() & ((1l << 53) - 1)) * (1.0 / (1l << 53));
     }
-    
+
     private void uniform(float[] data, int numel, float from, float to) {
         for (int t = 0 ; t < numel ; t++) {
             data[t] = randfloat32() * (to - from) + from;
         }
     }
-    
+
     // Box-Muller transform: maps uniform random numbers to Gaussian distributed numbers
     // https://en.wikipedia.org/wiki/Box%E2%80%93Muller_transform
     public void normal_fill_16(float[] data, float mean, float std) {
@@ -185,7 +185,7 @@ public class Mt19937 {
             normal_fill_16(data, mean, std);
         }
     }
-    
+
     private void normal(float[] data, int numel, float mean, float std) {
         double EPSILONE = 1e-12;
         if (numel >= 16) {
@@ -211,13 +211,13 @@ public class Mt19937 {
             }
         }
     }
-    
+
     public void init_identity_permutation(int[] data, int numel) {
         for (int i = 0 ; i < numel ; i++) {
             data[i] = i;
         }
     }
-    
+
     public void random_permutation(int[] data, int numel) {
         for (int i = numel - 1 ; i > 0 ; i--) {
             // pick an index j in [0, i] with equal probability
@@ -228,7 +228,7 @@ public class Mt19937 {
             data[j] = tmp;
         }
     }
-    
+
     public static void test_Mt19937() {
         Mt19937 state = new Mt19937();
         state.manual_seed(137);
@@ -237,14 +237,14 @@ public class Mt19937 {
         System.out.println(state.randint32());
         System.out.println(state.randint32());
         System.out.println(state.randint32());
-    
+
         float t8[] = new float[8];
         state.normal(t8, 8, 0, 1);
         for (int i = 0; i < 8; i++) {
             System.out.println(t8[i]);
         }
         System.out.println(state.randint32());
-    
+
         float t16[] = new float[16];
         state.normal(t16, 16, 0, 1);
         for (int i = 0; i < 16; i++) {

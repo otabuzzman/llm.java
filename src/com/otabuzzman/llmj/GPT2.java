@@ -20,20 +20,20 @@ import java.nio.IntBuffer;
 import java.rmi.UnexpectedException;
 
 public class GPT2 {
-    GPT2Config config;
+    public GPT2Config config;
     // the weights (parameters) of the model, and their sizes
     ParameterTensors params;
     FloatBuffer params_memory;
-    int num_parameters;
+    public int num_parameters;
     // gradients of the weights
-    ParameterTensors grads;
-    FloatBuffer grads_memory = null;
+    public ParameterTensors grads;
+    public FloatBuffer grads_memory = null;
     // buffers for the AdamW optimizer
     FloatBuffer m_memory = null;
     FloatBuffer v_memory = null;
     // the activations of the model, and their sizes
-    ActivationTensors acts;
-    FloatBuffer acts_memory = null;
+    public ActivationTensors acts;
+    public FloatBuffer acts_memory = null;
     int num_activations;
     // gradients of the activations
     ActivationTensors grads_acts;
@@ -43,7 +43,7 @@ public class GPT2 {
     int seq_len = 0; // the sequence length (T) of current forward pass
     IntBuffer inputs = null; // the input tokens for the current forward pass
     IntBuffer targets = null; // the target tokens for the current forward pass
-    float mean_loss; // after a forward pass with targets, will be populated with the mean loss
+    public float mean_loss; // after a forward pass with targets, will be populated with the mean loss
 
     private final static float GELU_SCALING_FACTOR = (float) Math.sqrt(2.0f / Math.PI);
 
@@ -76,7 +76,7 @@ public class GPT2 {
 
         // allocate space for all the parameters and read them in
         params = new ParameterTensors(config);
-        
+
         // count the number of parameters
         num_parameters = params.count;
         System.out.println("num_parameters: " + num_parameters);
@@ -373,7 +373,7 @@ public class GPT2 {
         encoder_backward(grads.wte, grads.wpe, grads_acts.encoded, B, T, C);
     }
 
-    public void gpt2_update(float learning_rate, float beta1, float beta2, float eps, float weight_decay, int t) {
+    public void update(float learning_rate, float beta1, float beta2, float eps, float weight_decay, int t) {
         // reference: https://pytorch.org/docs/stable/generated/torch.optim.AdamW.html
 
         // lazily allocate the memory for m_memory and v_memory
