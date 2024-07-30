@@ -391,8 +391,8 @@ public class GPT2 {
             // update the second moment (RMSprop)
             float v = beta2 * v_memory.get(i) + (1.0f - beta2) * grad * grad;
             // bias-correct both moments
-            float m_hat = (float) (m / (1.0f - Math.pow(beta1, t)));
-            float v_hat = (float) (v / (1.0f - Math.pow(beta2, t)));
+            float m_hat = m / (1.0f - (float) Math.pow(beta1, t));
+            float v_hat = v / (1.0f - (float) Math.pow(beta2, t));
 
             // update
             m_memory.put(i, m);
