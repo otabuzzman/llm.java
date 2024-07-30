@@ -41,7 +41,7 @@ public class Tokenizer {
         }
         int length;
         token_table = new String[vocab_size];
-        for (int i=0 ; i<vocab_size ; i++) {
+        for (int i = 0 ; i<vocab_size ; i++) {
             length = file.readByte() & 0xFF; // convert signed byte to unsigned int
             if (length == 0) { throw new UnexpectedException(null); }
             byte[] token_bytes = new byte[length];

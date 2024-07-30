@@ -7,20 +7,19 @@ public class ParameterTensors {
     public final int wpe; // (maxT, C)
     public final int ln1w; // (L, C)
     public final int ln1b; // (L, C)
-    public final int qkvw; // (L, 3*C, C)
-    public final int qkvb; // (L, 3*C)
+    public final int qkvw; // (L, 3 * C, C)
+    public final int qkvb; // (L, 3 * C)
     public final int attprojw; // (L, C, C)
     public final int attprojb; // (L, C)
     public final int ln2w; // (L, C)
     public final int ln2b; // (L, C)
-    public final int fcw; // (L, 4*C, C)
-    public final int fcb; // (L, 4*C)
-    public final int fcprojw; // (L, C, 4*C)
+    public final int fcw; // (L, 4 * C, C)
+    public final int fcb; // (L, 4 * C)
+    public final int fcprojw; // (L, C, 4 * C)
     public final int fcprojb; // (L, C)
     public final int lnfw; // (C)
     public final int lnfb; // (C)
 
-    public final int[] array;
     public final int count;
 
     // llm.c: fill_in_parameter_sizes(...)
@@ -29,24 +28,23 @@ public class ParameterTensors {
         int C = config.channels;
         int maxT = config.max_seq_len;
         int L = config.num_layers;
-        wte = Vp * C; // wte
-        wpe = maxT * C; // wpe
-        ln1w = L * C; // ln1w
-        ln1b = L * C; // ln1b
-        qkvw = L * (3 * C) * C; // qkvw
-        qkvb = L * (3 * C); // qkvb
-        attprojw = L * C * C; // attprojw
-        attprojb = L * C; // attprojb
-        ln2w = L * C; // ln2w
-        ln2b = L * C; // ln2b
-        fcw = L * (4 * C) * C; // fcw
-        fcb = L * (4 * C); // fcb
-        fcprojw = L * C * (4 * C); // fcprojw
-        fcprojb = L * C; // fcprojb
-        lnfw = C; // lnfw
-        lnfb = C; // lnfb
+        wte = 0; // index of this plus size of previous
+        wpe = wte + Vp * C; // wte (size)
+        ln1w = wpe + maxT * C; // wpe
+        ln1b = ln1w + L * C; // ln1w
+        qkvw = ln1b + L * C; // ln1b
+        qkvb = qkvw + L * (3 * C) * C; // qkvw
+        attprojw = qkvb + L * (3 * C); // qkvb
+        attprojb = attprojw + L * C * C; // attprojw
+        ln2w = attprojb + L * C; // attprojb
+        ln2b = ln2w + L * C; // ln2w
+        fcw = ln2b + L * C; // ln2b
+        fcb = fcw + L * (4 * C) * C; // fcw
+        fcprojw = fcb + L * (4 * C); // fcb
+        fcprojb = fcprojw + L * C * (4 * C); // fcprojw
+        lnfw = fcprojb + L * C; // fcprojb
+        lnfb = lnfw + C; // lnfw
 
-        array = new int[] { wte, wpe, ln1w, ln1b, qkvw, qkvb, attprojw, attprojb, ln2w, ln2b, fcw, fcb, fcprojw, fcprojb, lnfw, lnfb };
-        count = wte + wpe + ln1w + ln1b + qkvw + qkvb + attprojw + attprojb + ln2w + ln2b + fcw + fcb + fcprojw + fcprojb + lnfw + lnfb;
+        count = lnfb + C; // lnfb
     }
 }

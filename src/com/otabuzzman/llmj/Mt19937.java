@@ -100,7 +100,7 @@ public class Mt19937 {
          MATRIX_A[0] = 0x0;
          MATRIX_A[1] = 0x9908b0df;
          state[0] = seed & 0xffffffff;
-        for ( int j = 1 ; j < MERSENNE_STATE_N ; j++) {
+        for (int j = 1 ; j < MERSENNE_STATE_N ; j++) {
             state[j] = 1812433253 * (state[j - 1] ^ (state[j - 1] >>> 30)) + j;
             state[j] &= 0xffffffff;
         }
@@ -112,7 +112,7 @@ public class Mt19937 {
         left = MERSENNE_STATE_N;
         next = 0;
         int y, j;
-        for ( j = 0 ; j < MERSENNE_STATE_N -  MERSENNE_STATE_M; j++) {
+        for (j = 0 ; j < MERSENNE_STATE_N -  MERSENNE_STATE_M; j++) {
             y = (state[j] & UMASK) | (state[j + 1] & LMASK);
             state[j] = state[j + MERSENNE_STATE_M] ^ (y >>> 1) ^ MATRIX_A[y & 0x1];
         }
@@ -150,7 +150,7 @@ public class Mt19937 {
     }
     
     private void uniform(float[] data, int numel, float from, float to) {
-        for ( int t=0 ; t < numel ; t++) {
+        for (int t = 0 ; t < numel ; t++) {
             data[t] = randfloat32() * (to - from) + from;
         }
     }
@@ -159,7 +159,7 @@ public class Mt19937 {
     // https://en.wikipedia.org/wiki/Box%E2%80%93Muller_transform
     public void normal_fill_16(float[] data, float mean, float std) {
         double EPSILONE = 1e-12;
-        for ( int t=0 ; t < 8 ; t++) {
+        for (int t = 0 ; t < 8 ; t++) {
             double u1 = 1 - data[t];
             double u2 = data[t + 8];
             double radius = Math.sqrt(-2 * Math.log(u1 + EPSILONE));
@@ -170,16 +170,16 @@ public class Mt19937 {
     }
 
     public void normal_fill(float[] data, int numel, float mean, float std) {
-        for ( int t=0 ; t < numel ; t++) {
+        for (int t = 0 ; t < numel ; t++) {
             data[t] = randfloat32();
         }
-        for ( int i=0 ; i < numel - 15 ; i += 16) {
+        for (int i = 0 ; i < numel - 15 ; i += 16) {
             normal_fill_16(data, mean, std);
         }
         if (numel % 16 != 0) {
             // recompute the last 16 values
             int last16 = numel - 16;
-            for ( int i=0 ; i < 16 ; i++) {
+            for (int i = 0 ; i < 16 ; i++) {
                 data[last16 + i] = randfloat32();
             }
             normal_fill_16(data, mean, std);
@@ -194,7 +194,7 @@ public class Mt19937 {
         else {
             double next_double_normal_sample = 0.0; // make compiler warning happy, won't be used
             boolean has_next_double_normal_sample = false;
-            for ( int  t=0 ; t < numel ; t++) {
+            for (int t = 0 ; t < numel ; t++) {
                 if (has_next_double_normal_sample) {
                     data[t] = (float)(next_double_normal_sample * std + mean);
                     has_next_double_normal_sample = false;
@@ -213,13 +213,13 @@ public class Mt19937 {
     }
     
     public void init_identity_permutation(int[] data, int numel) {
-        for ( int i=0 ; i < numel ; i++) {
+        for (int i = 0 ; i < numel ; i++) {
             data[i] = i;
         }
     }
     
     public void random_permutation(int[] data, int numel) {
-        for (int i=numel - 1 ; i > 0 ; i--) {
+        for (int i = numel - 1 ; i > 0 ; i--) {
             // pick an index j in [0, i] with equal probability
             int j = (int) (randint32() % (i + 1));
             // swap i <-> j

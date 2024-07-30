@@ -76,7 +76,7 @@ public class DataLoader {
         // inspect and validate all shards so we don't get any runtime errors later
         // if too slow / too many shards, may wish to revisit later
         long ntok_total = 0;
-        for (int shard_index=0 ; shard_index < glob_result.gl_pathc() ; shard_index++) {
+        for (int shard_index = 0 ; shard_index < glob_result.gl_pathc() ; shard_index++) {
             long shard_ntok = load_shard(shard_index);
             // we need at least one batch/shard, the way things are written right now.
             // can be relaxed a lot later.
@@ -180,11 +180,11 @@ public class DataLoader {
     
         // read B*T+1 uint16_t tokens from the file into buffer
         tokens_file.seek(current_offset);
-        for (int i=0 ; i < B * T + 1 ; i++) {
+        for (int i = 0 ; i < B * T + 1 ; i++) {
             buffer[i] = Short.reverseBytes(tokens_file.readShort()); // convert little-endians in file to JVM big-endians
         }
         // decode the buffer into inputs and targets (cast to int)
-        for (int i = 0; i < B*T; i++) {
+        for (int i = 0; i < B * T; i++) {
             inputs[i] = (int) buffer[i];
             targets[i] = (int) buffer[i+1];
         }
