@@ -149,6 +149,7 @@ public class Mt19937 {
         return (randint64() & ((1l << 53) - 1)) * (1.0 / (1l << 53));
     }
 
+    @SuppressWarnings("unused")
     private void uniform(float[] data, int numel, float from, float to) {
         for (int t = 0 ; t < numel ; t++) {
             data[t] = randfloat32() * (to - from) + from;

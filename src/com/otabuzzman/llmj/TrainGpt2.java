@@ -2,6 +2,7 @@ package com.otabuzzman.llmj;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.nio.IntBuffer;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.rmi.UnexpectedException;
@@ -45,7 +46,7 @@ public class TrainGpt2 {
         Tokenizer tokenizer = new Tokenizer("gpt2_tokenizer.bin");
 
         // some memory for generating samples from the model
-        int[] gen_tokens = new int[B * T * 4 /*sizeof(int)*/];
+        IntBuffer gen_tokens = IntBuffer.allocate(B * T);
         int genT = 64; // number of steps of inference we will do
 
         // train
@@ -69,7 +70,7 @@ public class TrainGpt2 {
             if (step > 0 && step % 20 == 0) {
                 // fill up gen_tokens with the GPT2_EOT, which kicks off the generation
                 for(int i = 0 ; i < B * T ; ++i) {
-                    gen_tokens[i] = tokenizer.eot_token;
+                    gen_tokens.put(i, tokenizer.eot_token);
                 }
                 // now sample from the model autoregressively
                 System.out.print("generating:\n---\n");
@@ -99,14 +100,14 @@ public class TrainGpt2 {
                     }
                     next_token = model.config.vocab_size - 1; // in case of rounding errors
 
-                    gen_tokens[t] = next_token;
+                    gen_tokens.put(t, next_token);
                     // print the generated token, either using the Tokenizer or a fallback
                     if (tokenizer.init_ok) {
                         String token_str = tokenizer.decode(next_token);
                         System.out.print(token_str);
                     } else {
                         // fall back to printing the token id
-                        System.out.print(next_token);
+                        System.out.print(String.valueOf(next_token));
                     }
                     System.out.flush();
                 }
@@ -121,7 +122,16 @@ public class TrainGpt2 {
             model.backward();
             model.update(1e-4f, 0.9f, 0.999f, 1e-8f, 0.0f, step+1);
             end = System.currentTimeMillis();
-            System.out.printf("step %d: train loss %f (took %f ms)\n", step, model.mean_loss, end - start);
+            System.out.printf("step %d: train loss %f (took %d ms)\n", step, model.mean_loss, end - start);
+        }
+    }
+
+    public static void main(String[] args) {
+        TrainGpt2 gpt = new TrainGpt2();
+        try {
+            gpt.run();
+        } catch (Exception e) {
+            System.err.println(e);
         }
     }
 }

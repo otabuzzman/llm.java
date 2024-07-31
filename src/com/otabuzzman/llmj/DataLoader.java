@@ -9,6 +9,10 @@ package com.otabuzzman.llmj;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.IntBuffer;
+import java.nio.ShortBuffer;
 import java.rmi.UnexpectedException;
 
 public class DataLoader {
@@ -32,11 +36,11 @@ public class DataLoader {
     RandomAccessFile tokens_file = null;
     // data buffers
     // we fread data from file into this buffer
-    short[] buffer;
+    IntBuffer buffer; // actually unsigned shorts
     // input tokens into transformer
-    public int[] inputs;
+    public IntBuffer inputs;
     // target tokens for the transformer
-    public int[] targets;
+    public IntBuffer targets;
     // random shuffle related variables
     Mt19937 shuffle_rng;
     boolean should_shuffle = false;
@@ -88,9 +92,9 @@ public class DataLoader {
         // printf("DataLoader: Found %ld tokens across %zu shards\n", ntok_total, loader->glob_result.gl_pathc);
 
         // allocate all the space we'll need
-        buffer = new short[B * T + 1];
-        inputs = new int[B * T];
-        targets = new int[B * T];
+        buffer = IntBuffer.allocate(B * T + 1);
+        inputs = IntBuffer.allocate(B * T);
+        targets = IntBuffer.allocate(B * T);
         num_tokens = ntok_total;
 
         // reset the loader, to initialize it
@@ -180,13 +184,19 @@ public class DataLoader {
 
         // read B*T+1 uint16_t tokens from the file into buffer
         tokens_file.seek(current_offset);
+        ByteBuffer token_bytes = ByteBuffer.allocate((B * T + 1) * 2 /*sizeof(short)*/);
+        tokens_file.getChannel().read(token_bytes);
+        token_bytes.order(ByteOrder.LITTLE_ENDIAN);
+        token_bytes.flip();
+        ShortBuffer token_shorts = token_bytes.asShortBuffer();
         for (int i = 0 ; i < B * T + 1 ; i++) {
-            buffer[i] = Short.reverseBytes(tokens_file.readShort()); // convert little-endians in file to JVM big-endians
+            int t = token_shorts.get(i);
+            buffer.put(i, (t < 0) ? t + 0x10000 : t);
         }
         // decode the buffer into inputs and targets (cast to int)
         for (int i = 0; i < B * T; i++) {
-            inputs[i] = (int) buffer[i];
-            targets[i] = (int) buffer[i+1];
+            inputs.put(i, buffer.get(i));
+            targets.put(i, buffer.get(i + 1));
         }
     }
 

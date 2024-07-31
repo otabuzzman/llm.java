@@ -28,23 +28,23 @@ public class ParameterTensors {
         int C = config.channels;
         int maxT = config.max_seq_len;
         int L = config.num_layers;
-        wte = 0; // index of this plus size of previous
-        wpe = wte + Vp * C; // wte (size)
-        ln1w = wpe + maxT * C; // wpe
-        ln1b = ln1w + L * C; // ln1w
-        qkvw = ln1b + L * C; // ln1b
-        qkvb = qkvw + L * (3 * C) * C; // qkvw
-        attprojw = qkvb + L * (3 * C); // qkvb
-        attprojb = attprojw + L * C * C; // attprojw
-        ln2w = attprojb + L * C; // attprojb
-        ln2b = ln2w + L * C; // ln2w
-        fcw = ln2b + L * C; // ln2b
-        fcb = fcw + L * (4 * C) * C; // fcw
-        fcprojw = fcb + L * (4 * C); // fcb
-        fcprojb = fcprojw + L * C * (4 * C); // fcprojw
-        lnfw = fcprojb + L * C; // fcprojb
-        lnfb = lnfw + C; // lnfw
+        wte = 0; // wte
+        wpe = wte + Vp * C; // wpe (size of previous plus index of this)
+        ln1w = wpe + maxT * C; // ln1w
+        ln1b = ln1w + L * C; // ln1b
+        qkvw = ln1b + L * C; // qkvw
+        qkvb = qkvw + L * (3 * C) * C; // qkvb
+        attprojw = qkvb + L * (3 * C); // attprojw
+        attprojb = attprojw + L * C * C; // attprojb
+        ln2w = attprojb + L * C; // ln2w
+        ln2b = ln2w + L * C; // ln2b
+        fcw = ln2b + L * C; // fcw
+        fcb = fcw + L * (4 * C) * C; // fcb
+        fcprojw = fcb + L * (4 * C); // fcprojw
+        fcprojb = fcprojw + L * C * (4 * C); // fcprojb
+        lnfw = fcprojb + L * C; // lnfw
+        lnfb = lnfw + C; // lnfb
 
-        count = lnfb + C; // lnfb
+        count = lnfb + C;
     }
 }

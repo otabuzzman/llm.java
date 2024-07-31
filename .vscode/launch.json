@@ -4,19 +4,24 @@
     // Weitere Informationen finden Sie unter https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
+
         {
             "type": "java",
-            "name": "App",
+            "name": "LlmJava",
             "request": "launch",
-            "mainClass": "App",
-            "projectName": "llm.java_a11f70c5"
+            "mainClass": "LlmJava"
         },
         {
             "type": "java",
-            "name": "App",
+            "name": "TestGpt2",
             "request": "launch",
-            "mainClass": "App",
-            "projectName": "llm.java_e61c08d6"
+            "mainClass": "com.otabuzzman.llmj.TestGpt2"
+        },
+        {
+            "type": "java",
+            "name": "TrainGpt2",
+            "request": "launch",
+            "mainClass": "com.otabuzzman.llmj.TrainGpt2"
         }
     ]
 }

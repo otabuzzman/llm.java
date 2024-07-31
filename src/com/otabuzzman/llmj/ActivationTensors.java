@@ -29,32 +29,35 @@ public class ActivationTensors {
 
     public final int count;
 
-    public ActivationTensors(GPT2Config config, int B, int T, int C, int L, int NH) {
+    public ActivationTensors(GPT2Config config, int B, int T) {
         int Vp = config.padded_vocab_size;
-        encoded = 0; // index of this plus size of previous
-        ln1 = encoded + B * T * C; // encoded (size)
-        ln1_mean = ln1 + L * B * T * C; // ln1
-        ln1_rstd = ln1_mean + L * B * T; // ln1_mean
-        qkv = ln1_rstd + L * B * T; // ln1_rstd
-        atty = qkv + L * B * T * 3 * C; // qkv
-        preatt = atty + L * B * T * C; // atty
-        att = preatt + L * B * NH * T * T; // preatt
-        attproj = att + L * B * NH * T * T; // att
-        residual2 = attproj + L * B * T * C; // attproj
-        ln2 = residual2 + L * B * T * C; // residual2
-        ln2_mean = ln2 + L * B * T * C; // ln2
-        ln2_rstd = ln2_mean + L * B * T; // ln2_mean
-        fch = ln2_rstd + L * B * T; // ln2_rstd
-        fch_gelu = fch + L * B * T * 4 * C; // fch
-        fcproj = fch_gelu + L * B * T * 4 * C; // fch_gelu
-        residual3 = fcproj + L * B * T * C; // fcproj
-        lnf = residual3 + L * B * T * C; // residual3
-        lnf_mean = lnf + B * T * C; // lnf
-        lnf_rstd = lnf_mean + B * T; // lnf_mean
-        logits = lnf_rstd + B * T; // lnf_rstd
-        probs = logits + B * T * Vp; // logits
-        losses = probs + B * T * Vp; // probs
+        int C = config.channels;
+        int NH = config.num_heads;
+        int L = config.num_layers;
+        encoded = 0; // encoded
+        ln1 = encoded + B * T * C; // ln1 (size of previous plus index of this)
+        ln1_mean = ln1 + L * B * T * C; // ln1_mean
+        ln1_rstd = ln1_mean + L * B * T; // ln1_rstd
+        qkv = ln1_rstd + L * B * T; // qkv
+        atty = qkv + L * B * T * 3 * C; // atty
+        preatt = atty + L * B * T * C; // preatt
+        att = preatt + L * B * NH * T * T; // att
+        attproj = att + L * B * NH * T * T; // attproj
+        residual2 = attproj + L * B * T * C; // residual2
+        ln2 = residual2 + L * B * T * C; // ln2
+        ln2_mean = ln2 + L * B * T * C; // ln2_mean
+        ln2_rstd = ln2_mean + L * B * T; // ln2_rstd
+        fch = ln2_rstd + L * B * T; // fch
+        fch_gelu = fch + L * B * T * 4 * C; // fch_gelu
+        fcproj = fch_gelu + L * B * T * 4 * C; // fcproj
+        residual3 = fcproj + L * B * T * C; // residual3
+        lnf = residual3 + L * B * T * C; // lnf
+        lnf_mean = lnf + B * T * C; // lnf_mean
+        lnf_rstd = lnf_mean + B * T; // lnf_rstd
+        logits = lnf_rstd + B * T; // logits
+        probs = logits + B * T * Vp; // probs
+        losses = probs + B * T * Vp; // losses
 
-        count = losses + B * T; // losses
+        count = losses + B * T;
     }
 }

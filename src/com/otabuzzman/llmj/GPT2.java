@@ -97,6 +97,7 @@ public class GPT2 {
     // all the individual layers' forward and backward passes
     // B = batch_size, T = sequence_length, C = channels, V = vocab_size
 
+    // acts, params, params
     public void encoder_forward(int out, int wte, int wpe, int B, int T, int C) {
         // out is (B,T,C). At each position (b,t), a C-dimensional vector summarizing token & position
         // inp is (B,T) of integers, holding the token ids at each (b,t) position
@@ -120,6 +121,7 @@ public class GPT2 {
         }
     }
 
+    // grads, grads, grads_acts
     public void encoder_backward(int dwte, int dwpe, int dout, int B, int T, int C) {
         for (int b = 0 ; b < B ; b++) {
             for (int t = 0 ; t < T; t++) {
@@ -136,7 +138,8 @@ public class GPT2 {
         }
     }
 
-    public void layernorm_forward(int out, int mean, int rstd, int weight, int inp, int bias, int B, int T, int C) {
+    // acts, acts, acts, acts, params, params
+    public void layernorm_forward(int out, int mean, int rstd, int inp, int weight, int bias, int B, int T, int C) {
         // reference: https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html
         // both inp and out are (B,T,C) of the activations
         // mean and rstd are (B,T) buffers, to be used later in backward pass
@@ -150,23 +153,23 @@ public class GPT2 {
                 // calculate the mean
                 float m = 0.0f;
                 for (int i = 0 ; i < C ; i++) {
-                    m += params_memory.get(x + i);
+                    m += acts_memory.get(x + i);
                 }
-                m = m/C;
+                m = m / C;
                 // calculate the variance (without any bias correction)
                 float v = 0.0f;
-                for (int i = 0; i < C; i++) {
-                    float xshift = params_memory.get(x + i) - m;
+                for (int i = 0 ; i < C ; i++) {
+                    float xshift = acts_memory.get(x + i) - m;
                     v += xshift * xshift;
                 }
-                v = v/C;
+                v = v / C;
                 // calculate the rstd (reciprocal standard deviation)
                 float s = 1.0f / (float) Math.sqrt(v + eps);
                 // seek to the output position in out[b,t,:]
                 int out_bt = out + b * T * C + t * C;
-                for (int i = 0; i < C; i++) {
-                    float n = (s * (params_memory.get(x + i) - m)); // normalize
-                    float o = n * acts_memory.get(weight + i) + params_memory.get(bias + i); // scale and shift
+                for (int i = 0 ; i < C ; i++) {
+                    float n = (s * (acts_memory.get(x + i) - m)); // normalize
+                    float o = n * params_memory.get(weight + i) + params_memory.get(bias + i); // scale and shift
                     acts_memory.put(out_bt + i, o); // write
                 }
                 // cache the mean and rstd for the backward pass later
@@ -176,6 +179,7 @@ public class GPT2 {
         }
     }
 
+    // grads_acts, grads, grads, grads_acts, acts, params, acts, acts
     public void layernorm_backward(int dinp, int dweight, int dbias, int dout, int inp, int weight, int mean, int rstd, int B, int T, int C) {
         for (int b = 0; b < B; b++) {
             for (int t = 0; t < T; t++) {
@@ -217,6 +221,7 @@ public class GPT2 {
         }
     }
 
+    // acts, acts, params, params
     public void matmul_forward_naive(int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
         // the most naive implementation of matrix multiplication
         // this serves as an algorithmic reference, and as a fallback for
@@ -236,6 +241,7 @@ public class GPT2 {
         }
     }
 
+    // acts, acts, params, params
     public void matmul_forward(int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
         // most of the running time is spent here and in matmul_backward
         // therefore, the implementation below is very mildly optimized
@@ -281,6 +287,7 @@ public class GPT2 {
         }
     }
 
+    // grads_acts, grads, grads, grads_acts, acts, params
     public void matmul_backward(int dinp, int dweight, int dbias, int dout, int inp, int weight, int B, int T, int C, int OC) {
         // most of the running time is spent here and in matmul_forward
         // this backward could be done in a single "round" of loops
@@ -319,13 +326,148 @@ public class GPT2 {
         }
     }
 
+    // acts, acts, acts, acts
     public void attention_forward(int out, int preatt, int att, int inp, int B, int T, int C, int NH) {
+        // input is (B, T, 3C) holding the query, key, value (Q, K, V) vectors
+        // preatt, att are (B, NH, T, T). NH = number of heads, T = sequence length
+        // that holds the pre-attention and post-attention scores (used in backward)
+        // output is (B, T, C)
+        // attention is the only layer that mixes information across time
+        // every other operation is applied at every (b,t) position independently
+        // (and of course, no layer mixes information across batch)
+        int C3 = C * 3;
+        int hs = C / NH; // head size
+        float scale = 1.0f / (float) Math.sqrt(hs);
+
+        // #pragma omp parallel for collapse(3)
+        for (int b = 0 ; b < B ; b++) {
+            for (int t = 0 ; t < T ; t++) {
+                for (int h = 0 ; h < NH ; h++) {
+                    int query_t = inp + b * T * C3 + t * C3 + h * hs;
+                    int preatt_bth = preatt + b * NH * T * T + h * T * T + t * T;
+                    int att_bth = att + b * NH * T * T + h * T * T + t * T;
+
+                    // pass 1: calculate query dot key and maxval
+                    float maxval = -10000.0f; // TODO something better
+                    for (int t2 = 0; t2 <= t; t2++) {
+                        int key_t2 = inp + b * T * C3 + t2 * C3 + h * hs + C; // +C because it's key
+
+                        // (query_t) dot (key_t2)
+                        float val = 0.0f;
+                        for (int i = 0; i < hs; i++) {
+                            val += acts_memory.get(query_t + i) * acts_memory.get(key_t2 + i);
+                        }
+                        val *= scale;
+                        if (val > maxval) {
+                            maxval = val;
+                        }
+
+                        acts_memory.put(preatt_bth + t2, val);
+                    }
+
+                    // pass 2: calculate the exp and keep track of sum
+                    // maxval is being calculated and subtracted only for numerical stability
+                    float expsum = 0.0f;
+                    for (int t2 = 0; t2 <= t; t2++) {
+                        float expv = (float) Math.exp(acts_memory.get(preatt_bth + t2) - maxval);
+                        expsum += expv;
+                        acts_memory.put(att_bth + t2, expv);
+                    }
+                    float expsum_inv = expsum == 0.0f ? 0.0f : 1.0f / expsum;
+
+                    // pass 3: normalize to get the softmax
+                    for (int t2 = 0; t2 < T; t2++) {
+                        if (t2 <= t) {
+                            acts_memory.put(att_bth + t2, acts_memory.get(att_bth + t2) * expsum_inv);
+                        } else {
+                            // causal attention mask. not strictly necessary to set to zero here
+                            // only doing this explicitly for debugging and checking to PyTorch
+                            acts_memory.put(att_bth + t2, 0.0f);
+                        }
+                    }
+
+                    // pass 4: accumulate weighted values into the output of attention
+                    int out_bth = out + b * T * C + t * C + h * hs;
+                    for (int i = 0; i < hs; i++) { acts_memory.put(out_bth + i, 0.0f); }
+                    for (int t2 = 0; t2 <= t; t2++) {
+                        int value_t2 = inp + b * T * C3 + t2 * C3 + h * hs + C*2; // +C*2 because it's value
+                        float att_btht2 = acts_memory.get(att_bth + t2);
+                        for (int i = 0; i < hs; i++) {
+                            acts_memory.put(out_bth + i, acts_memory.get(out_bth + i) + att_btht2 * acts_memory.get(value_t2 + i));
+                        }
+                    }
+                }
+            }
+        }
     }
 
+    // grads_act, grads_act, grads_act, grads_act, acts, acts
     public void attention_backward(int dinp, int dpreatt, int datt, int dout, int inp, int att, int B, int T, int C, int NH) {
+        // inp/dinp are (B, T, 3C) Q,K,V
+        // att/datt/dpreatt are (B, NH, T, T)
+        // dout is (B, T, C)
+        int C3 = C * 3;
+        int hs = C / NH; // head size
+        float scale = 1.0f / (float) Math.sqrt(hs);
+
+        for (int b = 0 ; b < B ; b++) {
+            for (int t = 0 ; t < T ; t++) {
+                for (int h = 0 ; h < NH ; h++) {
+                    int att_bth = att + b * NH * T * T + h * T * T + t * T;
+                    int datt_bth = datt + b * NH * T * T + h * T * T + t * T;
+                    int dpreatt_bth = dpreatt + b * NH * T * T + h * T * T + t * T;
+                    int dquery_t = dinp + b * T * C3 + t * C3 + h * hs;
+                    int query_t = inp + b * T * C3 + t * C3 + h * hs;
+
+                    // backward pass 4, through the value accumulation
+                    int dout_bth = dout + b * T * C + t * C + h * hs;
+                    for (int t2 = 0 ; t2 <= t ; t2++) {
+                        int value_t2 = inp + b * T * C3 + t2 * C3 + h * hs + C * 2; // +C*2 because it's value
+                        int dvalue_t2 = dinp + b * T * C3 + t2 * C3 + h * hs + C * 2;
+                        for (int i = 0 ; i < hs ; i++) {
+                            // in the forward pass this was:
+                            // out_bth[i] += att_bth[t2] * value_t2[i];
+                            // so now we have:
+                            grads_acts_memory.put(datt_bth + t2, grads_acts_memory.get(datt_bth + t2) + acts_memory.get(value_t2 + i) * grads_acts_memory.get(dout_bth + i));
+                            grads_acts_memory.put(dvalue_t2 + i, grads_acts_memory.get(dvalue_t2 + i) + acts_memory.get(att_bth + t2) * grads_acts_memory.get(dout_bth + i));
+                        }
+                    }
+
+                    // backward pass 2 & 3, the softmax
+                    // note that softmax (like e.g. tanh) doesn't need the input (preatt) to backward
+                    for (int t2 = 0 ; t2 <= t ; t2++) {
+                        for (int t3 = 0 ; t3 <= t ; t3++) {
+                            float indicator = t2 == t3 ? 1.0f : 0.0f;
+                            float local_derivative = acts_memory.get(att_bth + t2) * (indicator - acts_memory.get(att_bth + t3));
+                            grads_acts_memory.put(dpreatt_bth + t3, grads_acts_memory.get(dpreatt_bth + t3) + local_derivative * grads_acts_memory.get(datt_bth + t2));
+                        }
+                    }
+
+                    // backward pass 1, the query @ key matmul
+                    for (int t2 = 0 ; t2 <= t ; t2++) {
+                        int key_t2 = inp + b * T * C3 + t2 * C3 + h * hs + C; // +C because it's key
+                        int dkey_t2 = dinp + b * T * C3 + t2 * C3 + h * hs + C; // +C because it's key
+                        for (int i = 0; i < hs; i++) {
+                            // in the forward pass this was:
+                            // preatt_bth[t2] += (query_t[i] * key_t2[i]) * scale;
+                            // so now we have:
+                            grads_acts_memory.put(dquery_t + i, grads_acts_memory.get(dquery_t + i) + acts_memory.get(key_t2 + i) * grads_acts_memory.get(dpreatt_bth + t2) * scale);
+                            grads_acts_memory.put(dkey_t2 + i, grads_acts_memory.get(dkey_t2 + i) + acts_memory.get(query_t + i) * grads_acts_memory.get(dpreatt_bth + t2) * scale);
+                        }
+                    }
+                }
+            }
+        }
     }
 
+    // acts, acts
     public void gelu_forward(int out, int inp, int N) {
+        // (approximate) GeLU elementwise non-linearity in the MLP block of Transformer
+        for (int i = 0; i < N; i++) {
+            float x = acts_memory.get(inp + i);
+            float cube = 0.044715f * x * x * x;
+            acts_memory.put(out + i, 0.5f * x * (1.0f + (float) Math.tanh(GELU_SCALING_FACTOR * (x + cube))));
+        }
     }
 
     // we want to use -Ofast optimization, but sadly GeLU breaks, so disable this flag just for it (#168)
@@ -333,29 +475,110 @@ public class GPT2 {
     // #if defined(__GNUC__) && !defined(__clang__)
     // __attribute__((optimize("no-finite-math-only")))
     // #endif
+    // grads_acts, acts, grads_acts
     public void gelu_backward(int dinp, int inp, int dout, int N) {
+        for (int i = 0; i < N; i++) {
+            float x = acts_memory.get(inp + i);
+            float cube = 0.044715f * x * x * x;
+            float tanh_arg = GELU_SCALING_FACTOR * (x + cube);
+            float tanh_out = (float) Math.tanh(tanh_arg);
+            float coshf_out = (float) Math.cosh(tanh_arg);
+            float sech_out = 1.0f / (coshf_out * coshf_out);
+            float local_grad = 0.5f * (1.0f + tanh_out) + x * 0.5f * sech_out * GELU_SCALING_FACTOR * (1.0f + 3.0f * 0.044715f * x * x);
+            grads_acts_memory.put(dinp + i, grads_acts_memory.get(dinp + i) + local_grad * grads_acts_memory.get(dout + i));
+        }
     }
     // #pragma float_control(pop)
 
-    public void residual_forward(int out, float inp1, int inp2, int N) {
+    // acts, acts, acts
+    public void residual_forward(int out, int inp1, int inp2, int N) {
+        for (int i = 0 ; i < N ; i++) {
+            acts_memory.put(out + i, acts_memory.get(inp1 + i) + acts_memory.get(inp2 + i));
+        }
     }
 
+    // grads_acts, grads_acts, grads_acts
     public void residual_backward(int dinp1, int dinp2, int dout, int N) {
+        for (int i = 0 ; i < N ; i++) {
+            grads_acts_memory.put(dinp1 + i, grads_acts_memory.get(dinp1 + i) + grads_acts_memory.get(dout + i));
+            grads_acts_memory.put(dinp2 + i, grads_acts_memory.get(dinp2 + i) + grads_acts_memory.get(dout + i));
+        }
     }
 
+    // acts, acts
     public void softmax_forward(int probs, int logits, int B, int T, int V, int Vp) {
+        // output: probs are (B,T,Vp) of the probabilities (sums to 1.0 in each b,t position)
+        // input: logits is (B,T,Vp) of the unnormalized log probabilities
+        // Vp is the padded vocab size (for efficiency), V is the "real" vocab size
+        // example: Vp is 50304 and V is 50257
+        // #pragma omp parallel for collapse(2)
+        for (int b = 0 ; b < B ; b++) {
+            for (int t = 0 ; t < T ; t++) {
+                // probs <- softmax(logits)
+                int logits_bt = logits + b * T * Vp + t * Vp;
+                int probs_bt = probs + b * T * Vp + t * Vp;
+
+                // maxval is only calculated and subtracted for numerical stability
+                float maxval = -10000.0f; // TODO something better
+                for (int i = 0 ; i < V ; i++) {
+                    if (acts_memory.get(logits_bt + i) > maxval) {
+                        maxval = acts_memory.get(logits_bt + i);
+                    }
+                }
+                float sum = 0.0f;
+                for (int i = 0 ; i < V ; i++) {
+                    acts_memory.put(probs_bt + i, (float) Math.exp(acts_memory.get(logits_bt + i) - maxval));
+                    sum += acts_memory.get(probs_bt + i);
+                }
+                // note we only loop to V, leaving the padded dimensions
+                for (int i = 0; i < V; i++) {
+                    acts_memory.put(probs_bt + i, acts_memory.get(probs_bt + i) / sum);
+                }
+                // for extra super safety we may wish to include this too,
+                // forcing the probabilities here to be zero, but it shouldn't matter
+                for (int i = V; i < Vp; i++) {
+                    acts_memory.put(probs_bt + i, 0.0f);
+                }
+            }
+        }
     }
 
-    public void softmax_backward(int losses, int probs, int targets, int B, int T, int Vp) {
-    }
-
+    // acts, acts
     public void crossentropy_forward(int losses, int probs, int B, int T, int Vp) {
+        // output: losses is (B,T) of the individual losses at each position
+        // input: probs are (B,T,Vp) of the probabilities
+        // input: targets is (B,T) of integers giving the correct index in logits
+        for (int b = 0 ; b < B ; b++) {
+            for (int t = 0 ; t < T ; t++) {
+                // loss = -log(probs[target])
+                int probs_bt = probs + b * T * Vp + t * Vp;
+                int ix = targets.get(b * T + t);
+                acts_memory.put(losses + b * T + t, (float) -Math.log(acts_memory.get(probs_bt + ix)));
+            }
+        }
     }
 
+    // grads_acts, grads_acts, acts
     public void crossentropy_softmax_backward(int dlogits, int dlosses, int probs, int B, int T, int V, int Vp) {
+        // backwards through both softmax and crossentropy
+        for (int b = 0; b < B; b++) {
+            for (int t = 0; t < T; t++) {
+                int dlogits_bt = dlogits + b * T * Vp + t * Vp;
+                int probs_bt = probs + b * T * Vp + t * Vp;
+                float dloss = grads_acts_memory.get(dlosses + b * T + t);
+                int ix = targets.get(b * T + t);
+                // note we only loop to V, leaving the padded dimensions
+                // of dlogits untouched, so gradient there stays at zero
+                for (int i = 0; i < V; i++) {
+                    float p = acts_memory.get(probs_bt + i);
+                    float indicator = i == ix ? 1.0f : 0.0f;
+                    grads_acts_memory.put(dlogits_bt + i, grads_acts_memory.get(dlogits_bt + i) + (p - indicator) * dloss);
+                }
+            }
+        }
     }
 
-    public void forward(int[] inputs, int[] targets, int B, int T) throws UnexpectedException {
+    public void forward(IntBuffer inputs, IntBuffer targets, int B, int T) throws UnexpectedException {
         // convenience parameters (size_t to help prevent int overflow)
         int V = config.vocab_size;
         int Vp = config.padded_vocab_size;
@@ -365,10 +588,10 @@ public class GPT2 {
 
         // validate inputs, all indices must be in the range [0, V)
         for(int i=0; i < B * T; i++) {
-            int v = inputs[i];
+            int v = inputs.get(i);
             if (0 > v || v >= V) { throw new IndexOutOfBoundsException(); }
             if (targets != null) {
-                v = targets[i];
+                v = targets.get(i);
                 if (0 > v || v >= V) { throw new IndexOutOfBoundsException(); }
             }
         }
@@ -378,7 +601,7 @@ public class GPT2 {
             batch_size = B;
             seq_len = T;
             // and now allocate the space
-            acts = new ActivationTensors(config, B, T, C, L, NH);
+            acts = new ActivationTensors(config, B, T);
 
             num_activations = acts.count;
             System.out.println("num_activations: " + num_activations);
@@ -387,7 +610,7 @@ public class GPT2 {
             this.inputs = IntBuffer.allocate(B * T);
             this.targets = IntBuffer.allocate(B * T); // might be unused if we never have targets but it's small
         } else {
-             // validate B,T are not larger than the values used at initialisation
+            // validate B,T are not larger than the values used at initialisation
             // (smaller B,T are okay for inference only)
             if (B > batch_size || T > seq_len) {
                 throw new UnexpectedException(null);
@@ -395,7 +618,9 @@ public class GPT2 {
         }
 
         // cache the inputs/targets
+        this.inputs.rewind();
         this.inputs.put(inputs);
+        this.targets.rewind();
         this.targets.put(targets);
 
         int residual;
@@ -458,7 +683,7 @@ public class GPT2 {
             crossentropy_forward(acts.losses, acts.probs, B, T, Vp);
             // for convenience also evaluate the mean loss
             mean_loss = 0.0f;
-            for (int i = 0; i < B * T; i++) { mean_loss += acts_memory.get(acts.losses + i); }
+            for (int i = 0 ; i < B * T ; i++) { mean_loss += acts_memory.get(acts.losses + i); }
             mean_loss /= B * T;
         } else {
             // if we don't have targets, we don't have a loss
@@ -480,12 +705,8 @@ public class GPT2 {
     }
 
     public void backward() throws UnexpectedException {
-        if (mean_loss == -1.0f) { throw new UnexpectedException(null); }
-
-        if (grads_memory == null) {
-            grads_memory = FloatBuffer.allocate(params.count);
-            grads_acts_memory = FloatBuffer.allocate(acts.count);
-        }
+    // double check we forwarded previously, with targets
+    if (mean_loss == -1.0f) { throw new UnexpectedException(null); }
 
         // convenience shortcuts (and size_t to help prevent int overflow)
         int B = batch_size;
@@ -495,6 +716,13 @@ public class GPT2 {
         int L = config.num_layers;
         int NH = config.num_heads;
         int C = config.channels;
+
+        if (grads_memory == null) {
+            grads = new ParameterTensors(config);
+            grads_memory = FloatBuffer.allocate(params.count);
+            grads_acts = new ActivationTensors(config, B, T);
+            grads_acts_memory = FloatBuffer.allocate(acts.count);
+        }
 
         // we kick off the chain rule by filling in dlosses with 1.0f/(B*T)
         // technically this is a small, inline backward() pass of calculating

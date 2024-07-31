@@ -33,9 +33,9 @@ public class TestGpt2 {
             // the actual numbers, so we can do a visual, qualitative proof/assessment
             if (i < print_upto) {
                 if (diff <= tol) {
-                    if (i < print_upto) { System.out.print("OK "); }
+                    System.out.print("OK ");
                 } else {
-                    if (i < print_upto) { System.out.print("NOT OK "); }
+                    System.out.print("NOT OK ");
                 }
                 System.out.printf("%f %f\n", grads_memory.get(a + i), expected_grads_memory.get(b + i));
             }
@@ -123,7 +123,7 @@ public class TestGpt2 {
         for (int step = 0 ; step < 10 ; step++) {
             long start = System.currentTimeMillis();
 
-            model.forward(x.array(), y.array(), B, T);
+            model.forward(x, y, B, T);
             model.zero_grad();
             model.backward();
 
@@ -198,10 +198,19 @@ public class TestGpt2 {
             allok = allok && step_loss_ok;
 
             // print the timing information at the end
-            System.out.printf("step %d: loss %f (took %f ms) OK = %b\n", step, model.mean_loss, end - start, step_loss_ok);
+            System.out.printf("step %d: loss %f (took %d ms) OK = %b\n", step, model.mean_loss, end - start, step_loss_ok);
         }
 
         // final judgement
         System.out.printf("overall okay: %b\n", allok);
+    }
+
+    public static void main(String[] args) {
+        TestGpt2 gpt = new TestGpt2();
+        try {
+            gpt.run();
+        } catch (Exception e) {
+            System.err.println(e);
+        }
     }
 }
