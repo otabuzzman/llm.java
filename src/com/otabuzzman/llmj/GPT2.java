@@ -18,6 +18,7 @@ import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.rmi.UnexpectedException;
+import java.util.stream.IntStream;
 
 public class GPT2 {
     public GPT2Config config;
@@ -227,8 +228,11 @@ public class GPT2 {
         // this serves as an algorithmic reference, and as a fallback for
         // unfriendly input shapes inside matmul_forward(), below.
         // #pragma omp parallel for collapse(2)
-        for (int b = 0 ; b < B ; b++) {
-            for (int t = 0 ; t < T ; t++) {
+//        for (int b = 0 ; b < B ; b++) {
+//            for (int t = 0 ; t < T ; t++) {
+            IntStream.range(0, B * T).parallel().forEach( x -> {
+                int b = x / T;
+                int t = x % T;
                 int bt = b * T + t;
                 for (int o = 0 ; o < OC ; o++) {
                     float val = (bias != -1) ? params_memory.get(bias + o) : 0.0f;
@@ -237,8 +241,8 @@ public class GPT2 {
                     }
                     acts_memory.put(out + bt * OC + o, val);
                 }
-            }
-        }
+            });
+//        }
     }
 
     // acts, acts, params, params
@@ -260,7 +264,9 @@ public class GPT2 {
         // collapse the B and T loops into one and turn it into a strided loop.
         // then we can tile the inner loop, and reuse the loaded weight LOOP_UNROLL many times
         // #pragma omp parallel for
-        for (int obt = 0; obt < B * T; obt += LOOP_UNROLL) {
+//        for (int obt = 0; obt < B * T; obt += LOOP_UNROLL) {
+        IntStream.range(0, B * T / LOOP_UNROLL).parallel().forEach( obt -> {
+            obt *= LOOP_UNROLL;
             for (int o = 0; o < OC; o++) {
                 // we'll keep LOOP_UNROLL many results in registers
                 float[] result = new float[LOOP_UNROLL];
@@ -284,7 +290,7 @@ public class GPT2 {
                     acts_memory.put(out + bt * OC + o, result[ibt]);
                 }
             }
-        }
+        });
     }
 
     // grads_acts, grads, grads, grads_acts, acts, params
@@ -295,8 +301,11 @@ public class GPT2 {
 
         // backward into inp first, parallelize over B,T
         // #pragma omp parallel for collapse(2)
-        for (int b = 0 ; b < B ; b++) {
-            for (int t = 0 ; t < T ; t++) {
+//        for (int b = 0 ; b < B ; b++) {
+//            for (int t = 0 ; t < T ; t++) {
+            IntStream.range(0, B * T).parallel().forEach( x -> {
+                int b = x / T;
+                int t = x % T;
                 int dout_bt = dout + b * T * OC + t * OC;
                 int dinp_bt = dinp + b * T * C + t * C;
                 for (int o = 0 ; o < OC ; o++) {
@@ -306,11 +315,12 @@ public class GPT2 {
                         grads_acts_memory.put(dinp_bt + i, grads_acts_memory.get(dinp_bt + i) + params_memory.get(wrow + i) * d);
                     }
                 }
-            }
-        }
+            });
+//        }
         // backward into weight/bias, parallelize over output channels OC
         // #pragma omp parallel for
-        for (int o = 0 ; o < OC ; o++) {
+//        for (int o = 0 ; o < OC ; o++) {
+        IntStream.range(0, OC).parallel().forEach( o -> {
             for (int b = 0 ; b < B ; b++) {
                 for (int t = 0 ; t < T ; t++) {
                     int dout_bt = dout + b * T * OC + t * OC;
@@ -323,7 +333,7 @@ public class GPT2 {
                     }
                 }
             }
-        }
+        });
     }
 
     // acts, acts, acts, acts
@@ -618,8 +628,10 @@ public class GPT2 {
         }
 
         // cache the inputs/targets
+        this.inputs.rewind();
         this.inputs.put(inputs);
         if (targets != null ) {
+            this.targets.rewind();
             this.targets.put(targets);
         }
 
