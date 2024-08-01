@@ -85,7 +85,7 @@ public class GPT2 {
         ByteBuffer params_memory = ByteBuffer.allocate(num_parameters * 4 /*sizeof(float)*/);
         model_file.getChannel().read(params_memory);
         params_memory.order(ByteOrder.LITTLE_ENDIAN);
-        params_memory.flip(); // apply byte order
+        params_memory.flip();
         this.params_memory = params_memory.asFloatBuffer();
         model_file.close();
 
@@ -115,7 +115,7 @@ public class GPT2 {
                 int wpe_t = wpe + t * C;
                 // add the two vectors and store the result in out[b,t,:]
                 for (int i = 0 ; i < C ; i++) {
-                    acts_memory.put(out_bt + t, params_memory.get(wte_ix + i) + params_memory.get(wpe_t + i));
+                    acts_memory.put(out_bt + i, params_memory.get(wte_ix + i) + params_memory.get(wpe_t + i));
                 }
             }
         }
@@ -618,10 +618,10 @@ public class GPT2 {
         }
 
         // cache the inputs/targets
-        this.inputs.rewind();
         this.inputs.put(inputs);
-        this.targets.rewind();
-        this.targets.put(targets);
+        if (targets != null ) {
+            this.targets.put(targets);
+        }
 
         int residual;
         // forward pass

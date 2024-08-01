@@ -87,15 +87,15 @@ public class TestGpt2 {
         state_file.getChannel().read(expected_loss_buffer);
         state_file.getChannel().read(expected_grads_buffer);
         x_buffer.order(ByteOrder.LITTLE_ENDIAN);
-        x_buffer.flip(); // apply byte order
+        x_buffer.flip();
         y_buffer.order(ByteOrder.LITTLE_ENDIAN);
-        y_buffer.flip(); // apply byte order
+        y_buffer.flip();
         expected_logits_buffer.order(ByteOrder.LITTLE_ENDIAN);
-        expected_logits_buffer.flip(); // apply byte order
+        expected_logits_buffer.flip();
         expected_loss_buffer.order(ByteOrder.LITTLE_ENDIAN);
-        expected_loss_buffer.flip(); // apply byte order
+        expected_loss_buffer.flip();
         expected_grads_buffer.order(ByteOrder.LITTLE_ENDIAN);
-        expected_grads_buffer.flip(); // apply byte order
+        expected_grads_buffer.flip();
         IntBuffer x = x_buffer.asIntBuffer();
         IntBuffer y = y_buffer.asIntBuffer();
         FloatBuffer expected_logits = expected_logits_buffer.asFloatBuffer();
@@ -157,7 +157,7 @@ public class TestGpt2 {
                 allok = allok && logits_ok;
 
                 // compare the achieved loss
-                if (Math.abs(model.mean_loss - expected_loss.get(0)) >= 1e-2) {
+                if (Math.abs(model.mean_loss - expected_loss.get(0)) >= 1e-2f) {
                     System.out.printf("LOSS MISMATCH: %f %f\n", model.mean_loss, expected_loss.get(0));
                     allok = false;
                 } else {
