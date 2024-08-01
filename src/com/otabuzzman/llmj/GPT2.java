@@ -457,7 +457,7 @@ public class GPT2 {
                     for (int t2 = 0 ; t2 <= t ; t2++) {
                         int key_t2 = inp + b * T * C3 + t2 * C3 + h * hs + C; // +C because it's key
                         int dkey_t2 = dinp + b * T * C3 + t2 * C3 + h * hs + C; // +C because it's key
-                        for (int i = 0; i < hs; i++) {
+                        for (int i = 0 ; i < hs ; i++) {
                             // in the forward pass this was:
                             // preatt_bth[t2] += (query_t[i] * key_t2[i]) * scale;
                             // so now we have:
@@ -473,7 +473,7 @@ public class GPT2 {
     // acts, acts
     public void gelu_forward(int out, int inp, int N) {
         // (approximate) GeLU elementwise non-linearity in the MLP block of Transformer
-        for (int i = 0; i < N; i++) {
+        for (int i = 0 ; i < N ; i++) {
             float x = acts_memory.get(inp + i);
             float cube = 0.044715f * x * x * x;
             acts_memory.put(out + i, 0.5f * x * (1.0f + (float) Math.tanh(GELU_SCALING_FACTOR * (x + cube))));
@@ -487,7 +487,7 @@ public class GPT2 {
     // #endif
     // grads_acts, acts, grads_acts
     public void gelu_backward(int dinp, int inp, int dout, int N) {
-        for (int i = 0; i < N; i++) {
+        for (int i = 0 ; i < N ; i++) {
             float x = acts_memory.get(inp + i);
             float cube = 0.044715f * x * x * x;
             float tanh_arg = GELU_SCALING_FACTOR * (x + cube);
@@ -541,7 +541,7 @@ public class GPT2 {
                     sum += acts_memory.get(probs_bt + i);
                 }
                 // note we only loop to V, leaving the padded dimensions
-                for (int i = 0; i < V; i++) {
+                for (int i = 0 ; i < V ; i++) {
                     acts_memory.put(probs_bt + i, acts_memory.get(probs_bt + i) / sum);
                 }
                 // for extra super safety we may wish to include this too,
@@ -571,15 +571,15 @@ public class GPT2 {
     // grads_acts, grads_acts, acts
     public void crossentropy_softmax_backward(int dlogits, int dlosses, int probs, int B, int T, int V, int Vp) {
         // backwards through both softmax and crossentropy
-        for (int b = 0; b < B; b++) {
-            for (int t = 0; t < T; t++) {
+        for (int b = 0 ; b < B ; b++) {
+            for (int t = 0 ; t < T ; t++) {
                 int dlogits_bt = dlogits + b * T * Vp + t * Vp;
                 int probs_bt = probs + b * T * Vp + t * Vp;
                 float dloss = grads_acts_memory.get(dlosses + b * T + t);
                 int ix = targets.get(b * T + t);
                 // note we only loop to V, leaving the padded dimensions
                 // of dlogits untouched, so gradient there stays at zero
-                for (int i = 0; i < V; i++) {
+                for (int i = 0 ; i < V ; i++) {
                     float p = acts_memory.get(probs_bt + i);
                     float indicator = i == ix ? 1.0f : 0.0f;
                     grads_acts_memory.put(dlogits_bt + i, grads_acts_memory.get(dlogits_bt + i) + (p - indicator) * dloss);
@@ -597,7 +597,7 @@ public class GPT2 {
         int C = config.channels;
 
         // validate inputs, all indices must be in the range [0, V)
-        for(int i=0; i < B * T; i++) {
+        for(int i=0 ; i < B * T ; i++) {
             int v = inputs.get(i);
             if (0 > v || v >= V) { throw new IndexOutOfBoundsException(); }
             if (targets != null) {

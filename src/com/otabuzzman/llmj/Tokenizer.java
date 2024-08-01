@@ -60,4 +60,20 @@ public class Tokenizer {
             return null;
         }
     }
+
+    public boolean isprint(String piece) {
+        // the tokens are raw bytes, and we we only want to print the printable ones
+        // many bytes can be various control codes, backspace, etc.
+        if (piece == null) { return false; }
+        if (piece.length() == 0) { return false; }
+        // handle individual byte tokens
+        // every token is asserted to be at least one byte so doing piece[1] is ok
+        if (piece.length() == 1) {
+            char byte_val = piece.charAt(0);
+            if (Character.isISOControl(byte_val)) {
+                return false; // weird byte, don't print it
+            }
+        }
+        return true;
+    }
 }

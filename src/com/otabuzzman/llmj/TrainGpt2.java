@@ -88,7 +88,7 @@ public class TrainGpt2 {
                     float coin = random_f32();
                     // note we're only sampling from the first V elements, ignoring padding
                     // (the probabilities in the padded region should be zero anyway)
-                    int next_token;
+                    int next_token = model.config.vocab_size - 1; // in case of rounding errors
                     // sample index from probabilities (they must sum to 1!)
                     // coin is a random number in [0, 1), usually from random_f32()
                     float cdf = 0.0f;
@@ -96,18 +96,20 @@ public class TrainGpt2 {
                         cdf += model.acts_memory.get(probs + i);
                         if (coin < cdf) {
                             next_token = i;
+                            break;
                         }
                     }
-                    next_token = model.config.vocab_size - 1; // in case of rounding errors
 
                     gen_tokens.put(t, next_token);
                     // print the generated token, either using the Tokenizer or a fallback
                     if (tokenizer.init_ok) {
                         String token_str = tokenizer.decode(next_token);
-                        System.out.print(token_str);
+                        if (tokenizer.isprint(token_str)) {
+                            System.out.print(token_str);
+                        }
                     } else {
                         // fall back to printing the token id
-                        System.out.print(String.valueOf(next_token));
+                        System.out.print(String.valueOf(next_token) + " ");
                     }
                     System.out.flush();
                 }
