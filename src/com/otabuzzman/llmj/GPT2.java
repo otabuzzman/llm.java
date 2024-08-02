@@ -628,9 +628,11 @@ public class GPT2 {
         }
 
         // cache the inputs/targets
+        inputs.rewind();
         this.inputs.rewind();
         this.inputs.put(inputs);
         if (targets != null ) {
+            targets.rewind();
             this.targets.rewind();
             this.targets.put(targets);
         }
