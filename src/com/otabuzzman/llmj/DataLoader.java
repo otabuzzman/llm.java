@@ -190,8 +190,8 @@ public class DataLoader {
         token_bytes.flip();
         ShortBuffer token_shorts = token_bytes.asShortBuffer();
         for (int i = 0 ; i < B * T + 1 ; i++) {
-            int t = token_shorts.get(i);
-            buffer.put(i, (t < 0) ? t + 0x10000 : t);
+            int t = token_shorts.get(i) & 0xffff;
+            buffer.put(i, t);
         }
         // decode the buffer into inputs and targets (cast to int)
         for (int i = 0; i < B * T; i++) {

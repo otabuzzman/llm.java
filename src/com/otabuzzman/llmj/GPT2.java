@@ -740,7 +740,7 @@ public class GPT2 {
         // technically this is a small, inline backward() pass of calculating
         // total, final loss as the mean over all losses over all (B,T) positions in the batch
         float dloss_mean = 1.0f / (B * T);
-        for (int i = 0 ; i < B * T ; i++) { grads_acts_memory.put(acts.losses + i, dloss_mean); }
+        for (int i = 0 ; i < B * T ; i++) { grads_acts_memory.put(grads_acts.losses + i, dloss_mean); }
 
         crossentropy_softmax_backward(grads_acts.logits, grads_acts.losses, acts.probs, B, T, V, Vp);
         matmul_backward(grads_acts.lnf, grads.wte, -1, grads_acts.logits, acts.lnf, params.wte, B, T, C, Vp);
