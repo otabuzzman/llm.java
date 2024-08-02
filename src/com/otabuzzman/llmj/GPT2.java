@@ -717,8 +717,8 @@ public class GPT2 {
     }
 
     public void backward() throws UnexpectedException {
-    // double check we forwarded previously, with targets
-    if (mean_loss == -1.0f) { throw new UnexpectedException(null); }
+        // double check we forwarded previously, with targets
+        if (mean_loss == -1.0f) { throw new UnexpectedException(null); }
 
         // convenience shortcuts (and size_t to help prevent int overflow)
         int B = batch_size;
