@@ -122,7 +122,7 @@ public class TrainGpt2 {
             model.forward(train_loader.inputs, train_loader.targets, B, T);
             model.zero_grad();
             model.backward();
-            model.update(1e-4f, 0.9f, 0.999f, 1e-8f, 0.0f, step+1);
+            model.update(1e-4f, 0.9f, 0.999f, 1e-8f, 0.0f, step + 1);
             end = System.currentTimeMillis();
             System.out.printf("step %d: train loss %f (took %d ms)\n", step, model.mean_loss, end - start);
         }
