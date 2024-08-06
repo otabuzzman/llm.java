@@ -230,10 +230,11 @@ public class GPT2 {
         // #pragma omp parallel for collapse(2)
 //        for (int b = 0 ; b < B ; b++) {
 //            for (int t = 0 ; t < T ; t++) {
-            IntStream.range(0, B * T).parallel().forEach( x -> {
-                int b = x / T;
-                int t = x % T;
-                int bt = b * T + t;
+            IntStream.range(0, B * T).parallel().forEach( bt -> {
+                // unroll bt to b, t
+                // int b = bt / T;
+                // int t = bt % T;
+                // int bt = b * T + t;
                 for (int o = 0 ; o < OC ; o++) {
                     float val = (bias != -1) ? params_memory.get(bias + o) : 0.0f;
                     for (int i = 0 ; i < C ; i++) {
