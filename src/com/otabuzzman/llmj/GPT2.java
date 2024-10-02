@@ -8,17 +8,22 @@
  There will be other versions of this code that specialize it and make it fast.
  */
 
-package com.otabuzzman.llmj;
 
+package com.otabuzzman.llmj;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.rmi.UnexpectedException;
 import java.util.stream.IntStream;
+
+import jdk.incubator.vector.FloatVector;
+import jdk.incubator.vector.VectorOperators;
+import jdk.incubator.vector.VectorSpecies;
 
 public class GPT2 {
     public GPT2Config config;
@@ -47,6 +52,8 @@ public class GPT2 {
     public float mean_loss; // after a forward pass with targets, will be populated with the mean loss
 
     private final static float GELU_SCALING_FACTOR = (float) Math.sqrt(2.0f / Math.PI);
+
+    private final static boolean UseVectorAPI = "true".equalsIgnoreCase(System.getProperty("UseVectorAPI", "true"));
 
     // llm.c: gpt2_build_from_checkpoint(...)
     public GPT2(String checkpoint_path) throws FileNotFoundException, IOException {
@@ -83,11 +90,10 @@ public class GPT2 {
         System.out.println("num_parameters: " + num_parameters);
 
         // read in all the parameters from file
-        ByteBuffer params_memory = ByteBuffer.allocate(num_parameters * 4 /*sizeof(float)*/);
-        model_file.getChannel().read(params_memory);
-        params_memory.order(ByteOrder.LITTLE_ENDIAN);
-        params_memory.flip();
-        this.params_memory = params_memory.asFloatBuffer();
+        ByteBuffer _params_memory = ByteBuffer.allocate(num_parameters * 4 /*sizeof(float)*/).order(ByteOrder.LITTLE_ENDIAN);
+        this.params_memory = _params_memory.asFloatBuffer();
+
+        model_file.getChannel().read(_params_memory);
         model_file.close();
 
         // other inits
@@ -223,6 +229,70 @@ public class GPT2 {
     }
 
     // acts, acts, params, params
+    public void matmul_forward(int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
+        // Java vector API implementation of matrix multiplication
+        // #pragma omp parallel for collapse(2)
+//       for (int b = 0 ; b < B ; b++) {
+//           for (int t = 0 ; t < T ; t++) {
+//               int bt = b * T + t;
+            IntStream.range(0, B * T).parallel().forEach( bt -> {
+                // unroll bt to b, t
+                // int b = bt / T;
+                // int t = bt % T;
+                // int bt = b * T + t;
+                MemorySegment params_memory = MemorySegment.ofBuffer(this.params_memory).asSlice(weight * Float.BYTES);
+                MemorySegment acts_memory = MemorySegment.ofBuffer(this.acts_memory).asSlice((inp + bt * C) * Float.BYTES);
+                IntStream.range(0, OC).parallel().forEach(o -> {
+                    float val = (bias != -1) ? this.params_memory.get(bias + o) : 0.0f;
+                    int i = 0;
+                    if (UseVectorAPI) {
+                        VectorSpecies<Float> species = FloatVector.SPECIES_MAX;
+                        FloatVector sum0 = FloatVector.zero(species);
+                        FloatVector sum1 = FloatVector.zero(species);
+                        FloatVector sum2 = FloatVector.zero(species);
+                        FloatVector sum3 = FloatVector.zero(species);
+                        int width = species.length();
+                        int upperBound = C - C % (4 * width);
+                        for (; i < upperBound; i += 4 * width) {
+                            var ai0 = FloatVector.fromMemorySegment(species, acts_memory, (i + 0 * width) * Float.BYTES, ByteOrder.BIG_ENDIAN);
+                            var ai1 = FloatVector.fromMemorySegment(species, acts_memory, (i + 1 * width) * Float.BYTES, ByteOrder.BIG_ENDIAN);
+                            var ai2 = FloatVector.fromMemorySegment(species, acts_memory, (i + 2 * width) * Float.BYTES, ByteOrder.BIG_ENDIAN);
+                            var ai3 = FloatVector.fromMemorySegment(species, acts_memory, (i + 3 * width) * Float.BYTES, ByteOrder.BIG_ENDIAN);
+                            var pi0 = FloatVector.fromMemorySegment(species, params_memory, (o * C + i + 0 * width) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
+                            var pi1 = FloatVector.fromMemorySegment(species, params_memory, (o * C + i + 1 * width) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
+                            var pi2 = FloatVector.fromMemorySegment(species, params_memory, (o * C + i + 2 * width) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
+                            var pi3 = FloatVector.fromMemorySegment(species, params_memory, (o * C + i + 3 * width) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
+                            sum0 = pi0.fma(ai0, sum0);
+                            sum1 = pi1.fma(ai1, sum1);
+                            sum2 = pi2.fma(ai2, sum2);
+                            sum3 = pi3.fma(ai3, sum3);
+                        }
+                        val += sum0.add(sum1).add(sum2).add(sum3).reduceLanes(VectorOperators.ADD);
+                    }
+
+                    // JIT compiler's auto-vectorization
+                    int upperBound = C & ~3;
+                    float[] sum = new float[4];
+                    for (; i < upperBound ; i += 4) {
+                        sum[0] += this.acts_memory.get(inp + bt * C + i + 0) * this.params_memory.get(weight + o * C + i + 0);
+                        sum[1] += this.acts_memory.get(inp + bt * C + i + 1) * this.params_memory.get(weight + o * C + i + 1);
+                        sum[2] += this.acts_memory.get(inp + bt * C + i + 2) * this.params_memory.get(weight + o * C + i + 2);
+                        sum[3] += this.acts_memory.get(inp + bt * C + i + 3) * this.params_memory.get(weight + o * C + i + 3);
+                    }
+                    val += sum[0] + sum[1] + sum[2] + sum[3];
+
+                    // process any tail elements
+                    for (; i < C ; i++) {
+                        val += this.acts_memory.get(inp + bt * C + i) * this.params_memory.get(weight + o * C + i);
+                    }
+                    this.acts_memory.put(out + bt * OC + o, val);
+                });
+            });
+//            }
+//        }
+    }
+
+    // acts, acts, params, params
     public void matmul_forward_naive(int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
         // the most naive implementation of matrix multiplication
         // this serves as an algorithmic reference, and as a fallback for
@@ -230,6 +300,7 @@ public class GPT2 {
         // #pragma omp parallel for collapse(2)
 //        for (int b = 0 ; b < B ; b++) {
 //            for (int t = 0 ; t < T ; t++) {
+//                int bt = b * T + t;
             IntStream.range(0, B * T).parallel().forEach( bt -> {
                 // unroll bt to b, t
                 // int b = bt / T;
@@ -243,11 +314,12 @@ public class GPT2 {
                     acts_memory.put(out + bt * OC + o, val);
                 }
             });
+//            }
 //        }
     }
 
     // acts, acts, params, params
-    public void matmul_forward(int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
+    public void matmul_forward_(int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
         // most of the running time is spent here and in matmul_backward
         // therefore, the implementation below is very mildly optimized
         // this function is otherwise identical to that of matmul_forward_naive()
@@ -616,7 +688,8 @@ public class GPT2 {
 
             num_activations = acts.count;
             System.out.println("num_activations: " + num_activations);
-            acts_memory = FloatBuffer.allocate(num_activations);
+            ByteBuffer _acts_memory = ByteBuffer.allocate(num_activations * 4);
+            acts_memory = _acts_memory.asFloatBuffer();
             // also create memory for caching inputs and targets
             this.inputs = IntBuffer.allocate(B * T);
             this.targets = IntBuffer.allocate(B * T); // might be unused if we never have targets but it's small

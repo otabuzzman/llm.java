@@ -74,33 +74,27 @@ public class TestGpt2 {
         System.out.println("seq_len: " + T);
 
         ParameterTensors expected_grads = new ParameterTensors(model.config);
-        ByteBuffer expected_grads_buffer = ByteBuffer.allocate(model.num_parameters * 4 /*sizeof(float)*/);
+        ByteBuffer _expected_grads_memory = ByteBuffer.allocate(model.num_parameters * 4 /*sizeof(float)*/).order(ByteOrder.LITTLE_ENDIAN);
+        this.expected_grads_memory = _expected_grads_memory.asFloatBuffer();
 
         // inputs and expected outputs, only used for error checking
-        ByteBuffer x_buffer = ByteBuffer.allocate(B * T * 4 /*sizeof(int)*/);
-        ByteBuffer y_buffer = ByteBuffer.allocate(B * T * 4 /*sizeof(int)*/);
-        ByteBuffer expected_logits_buffer = ByteBuffer.allocate(B * T * V * 4 /*sizeof(float)*/);
-        ByteBuffer expected_loss_buffer = ByteBuffer.allocate(1 * 4 /*sizeof(float)*/);
-        state_file.getChannel().read(x_buffer);
-        state_file.getChannel().read(y_buffer);
-        state_file.getChannel().read(expected_logits_buffer);
-        state_file.getChannel().read(expected_loss_buffer);
-        state_file.getChannel().read(expected_grads_buffer);
-        x_buffer.order(ByteOrder.LITTLE_ENDIAN);
-        x_buffer.flip();
-        y_buffer.order(ByteOrder.LITTLE_ENDIAN);
-        y_buffer.flip();
-        expected_logits_buffer.order(ByteOrder.LITTLE_ENDIAN);
-        expected_logits_buffer.flip();
-        expected_loss_buffer.order(ByteOrder.LITTLE_ENDIAN);
-        expected_loss_buffer.flip();
-        expected_grads_buffer.order(ByteOrder.LITTLE_ENDIAN);
-        expected_grads_buffer.flip();
-        IntBuffer x = x_buffer.asIntBuffer();
-        IntBuffer y = y_buffer.asIntBuffer();
-        FloatBuffer expected_logits = expected_logits_buffer.asFloatBuffer();
-        FloatBuffer expected_loss = expected_loss_buffer.asFloatBuffer();
-        expected_grads_memory = expected_grads_buffer.asFloatBuffer();
+        ByteBuffer _x = ByteBuffer.allocate(B * T * 4 /*sizeof(int)*/).order(ByteOrder.LITTLE_ENDIAN);
+        IntBuffer x = _x.asIntBuffer();
+
+        ByteBuffer _y = ByteBuffer.allocate(B * T * 4 /*sizeof(int)*/).order(ByteOrder.LITTLE_ENDIAN);
+        IntBuffer y = _y.asIntBuffer();
+
+        ByteBuffer _expected_logits = ByteBuffer.allocate(B * T * V * 4 /*sizeof(float)*/).order(ByteOrder.LITTLE_ENDIAN);
+        FloatBuffer expected_logits = _expected_logits.asFloatBuffer();
+
+        ByteBuffer _expected_loss = ByteBuffer.allocate(1 * 4 /*sizeof(float)*/).order(ByteOrder.LITTLE_ENDIAN);
+        FloatBuffer expected_loss = _expected_loss.asFloatBuffer();
+
+        state_file.getChannel().read(_x);
+        state_file.getChannel().read(_y);
+        state_file.getChannel().read(_expected_logits);
+        state_file.getChannel().read(_expected_loss);
+        state_file.getChannel().read(_expected_grads_memory);
         state_file.close();
 
         // overall OK signal for the test

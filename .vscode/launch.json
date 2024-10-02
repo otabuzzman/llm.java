@@ -16,12 +16,14 @@
             "name": "TestGpt2",
             "request": "launch",
             "mainClass": "com.otabuzzman.llmj.TestGpt2"
+            "vmArgs": "--enable-preview --add-modules jdk.incubator.vector -DUseVectorAPI=true"
         },
         {
             "type": "java",
             "name": "TrainGpt2",
             "request": "launch",
             "mainClass": "com.otabuzzman.llmj.TrainGpt2"
+            "vmArgs": "--enable-preview --add-modules jdk.incubator.vector -DUseVectorAPI=true"
         }
     ]
 }
