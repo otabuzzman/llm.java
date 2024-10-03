@@ -8,8 +8,8 @@
  There will be other versions of this code that specialize it and make it fast.
  */
 
-
 package com.otabuzzman.llmj;
+
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
