@@ -55,6 +55,17 @@ public class GPT2 {
 
     private final static boolean UseVectorAPI = "true".equalsIgnoreCase(System.getProperty("UseVectorAPI", "true"));
 
+    // https://stackoverflow.com/a/36335119 on assigning lambda to variable
+    // https://stackoverflow.com/a/29220300/
+    @FunctionalInterface
+    public interface MatmulForward {
+        void apply(int out, int inp, int weight, int bias, int B, int T, int C, int OC);
+    }
+   
+    final MatmulForward matmul_forward = this::matmul_forward_vecapi;
+    // final MatmulForward matmul_forward = this::matmul_forward_simple;
+    // final MatmulForward matmul_forward = this::matmul_forward_default;
+   
     // llm.c: gpt2_build_from_checkpoint(...)
     public GPT2(String checkpoint_path) throws FileNotFoundException, IOException {
         RandomAccessFile model_file = new RandomAccessFile(checkpoint_path, "r");
@@ -229,7 +240,8 @@ public class GPT2 {
     }
 
     // acts, acts, params, params
-    public void matmul_forward(int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
+    @SuppressWarnings("unused")
+    private void matmul_forward_vecapi(int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
         // Java vector API implementation of matrix multiplication
         // #pragma omp parallel for collapse(2)
 //       for (int b = 0 ; b < B ; b++) {
@@ -254,18 +266,18 @@ public class GPT2 {
                         int width = species.length();
                         int upperBound = C - C % (4 * width);
                         for (; i < upperBound; i += 4 * width) {
-                            var ai0 = FloatVector.fromMemorySegment(species, acts_memory, (i + 0 * width) * Float.BYTES, ByteOrder.BIG_ENDIAN);
-                            var ai1 = FloatVector.fromMemorySegment(species, acts_memory, (i + 1 * width) * Float.BYTES, ByteOrder.BIG_ENDIAN);
-                            var ai2 = FloatVector.fromMemorySegment(species, acts_memory, (i + 2 * width) * Float.BYTES, ByteOrder.BIG_ENDIAN);
-                            var ai3 = FloatVector.fromMemorySegment(species, acts_memory, (i + 3 * width) * Float.BYTES, ByteOrder.BIG_ENDIAN);
-                            var pi0 = FloatVector.fromMemorySegment(species, params_memory, (o * C + i + 0 * width) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
-                            var pi1 = FloatVector.fromMemorySegment(species, params_memory, (o * C + i + 1 * width) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
-                            var pi2 = FloatVector.fromMemorySegment(species, params_memory, (o * C + i + 2 * width) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
-                            var pi3 = FloatVector.fromMemorySegment(species, params_memory, (o * C + i + 3 * width) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
-                            sum0 = pi0.fma(ai0, sum0);
-                            sum1 = pi1.fma(ai1, sum1);
-                            sum2 = pi2.fma(ai2, sum2);
-                            sum3 = pi3.fma(ai3, sum3);
+                            var a0 = FloatVector.fromMemorySegment(species, acts_memory, (i + 0 * width) * Float.BYTES, ByteOrder.BIG_ENDIAN);
+                            var a1 = FloatVector.fromMemorySegment(species, acts_memory, (i + 1 * width) * Float.BYTES, ByteOrder.BIG_ENDIAN);
+                            var a2 = FloatVector.fromMemorySegment(species, acts_memory, (i + 2 * width) * Float.BYTES, ByteOrder.BIG_ENDIAN);
+                            var a3 = FloatVector.fromMemorySegment(species, acts_memory, (i + 3 * width) * Float.BYTES, ByteOrder.BIG_ENDIAN);
+                            var p0 = FloatVector.fromMemorySegment(species, params_memory, (o * C + i + 0 * width) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
+                            var p1 = FloatVector.fromMemorySegment(species, params_memory, (o * C + i + 1 * width) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
+                            var p2 = FloatVector.fromMemorySegment(species, params_memory, (o * C + i + 2 * width) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
+                            var p3 = FloatVector.fromMemorySegment(species, params_memory, (o * C + i + 3 * width) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
+                            sum0 = p0.fma(a0, sum0);
+                            sum1 = p1.fma(a1, sum1);
+                            sum2 = p2.fma(a2, sum2);
+                            sum3 = p3.fma(a3, sum3);
                         }
                         val += sum0.add(sum1).add(sum2).add(sum3).reduceLanes(VectorOperators.ADD);
                     }
@@ -293,7 +305,8 @@ public class GPT2 {
     }
 
     // acts, acts, params, params
-    public void matmul_forward_naive(int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
+    @SuppressWarnings("unused")
+    private void matmul_forward_simple(int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
         // the most naive implementation of matrix multiplication
         // this serves as an algorithmic reference, and as a fallback for
         // unfriendly input shapes inside matmul_forward(), below.
@@ -319,7 +332,8 @@ public class GPT2 {
     }
 
     // acts, acts, params, params
-    public void matmul_forward_(int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
+    @SuppressWarnings("unused")
+    private void matmul_forward_default(int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
         // most of the running time is spent here and in matmul_backward
         // therefore, the implementation below is very mildly optimized
         // this function is otherwise identical to that of matmul_forward_naive()
@@ -330,7 +344,7 @@ public class GPT2 {
         // make sure the tiled loop will be correct or fallback to naive version
         int LOOP_UNROLL = 8;
         if (B * T % LOOP_UNROLL != 0) {
-            matmul_forward_naive(out, inp, weight, bias, B, T, C, OC);
+            matmul_forward_simple(out, inp, weight, bias, B, T, C, OC);
             return;
         }
 
@@ -751,19 +765,19 @@ public class GPT2 {
 
             // now do the forward pass
             layernorm_forward(l_ln1, l_ln1_mean, l_ln1_rstd, residual, l_ln1w, l_ln1b, B, T, C);
-            matmul_forward(l_qkv, l_ln1, l_qkvw, l_qkvb, B, T, C, 3 * C);
+            matmul_forward.apply(l_qkv, l_ln1, l_qkvw, l_qkvb, B, T, C, 3 * C);
             attention_forward(l_atty, l_preatt, l_att, l_qkv, B, T, C, NH);
-            matmul_forward(l_attproj, l_atty, l_attprojw, l_attprojb, B, T, C, C);
+            matmul_forward.apply(l_attproj, l_atty, l_attprojw, l_attprojb, B, T, C, C);
             residual_forward(l_residual2, residual, l_attproj, B * T * C);
             layernorm_forward(l_ln2, l_ln2_mean, l_ln2_rstd, l_residual2, l_ln2w, l_ln2b, B, T, C);
-            matmul_forward(l_fch, l_ln2, l_fcw, l_fcb, B, T, C, 4 * C);
+            matmul_forward.apply(l_fch, l_ln2, l_fcw, l_fcb, B, T, C, 4 * C);
             gelu_forward(l_fch_gelu, l_fch, B * T * 4 * C);
-            matmul_forward(l_fcproj, l_fch_gelu, l_fcprojw, l_fcprojb, B, T, 4 * C, C);
+            matmul_forward.apply(l_fcproj, l_fch_gelu, l_fcprojw, l_fcprojb, B, T, 4 * C, C);
             residual_forward(l_residual3, l_residual2, l_fcproj, B * T * C);
         }
         residual = acts.residual3 + (L - 1) * B * T * C; // last residual is in residual3
         layernorm_forward(acts.lnf, acts.lnf_mean, acts.lnf_rstd, residual, params.lnfw, params.lnfb, B, T, C);
-        matmul_forward(acts.logits, acts.lnf, params.wte, -1, B, T, C, Vp);
+        matmul_forward.apply(acts.logits, acts.lnf, params.wte, -1, B, T, C, Vp);
         softmax_forward(acts.probs, acts.logits, B, T, V, Vp);
 
         // also forward the cross-entropy loss function if we have the targets
