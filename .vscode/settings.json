@@ -2,6 +2,7 @@
     "java.project.sourcePaths": ["src"],
     "java.project.outputPath": "bin",
     "java.project.referencedLibraries": [
-        "lib/**/*.jar"
+        "lib/**/*.jar",
+        "../tornadovm/dist/tornado-sdk/tornado-sdk-1.0.4-dev-2d0078f/share/**/*.jar"
     ]
 }

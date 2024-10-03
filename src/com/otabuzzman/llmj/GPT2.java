@@ -14,6 +14,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
@@ -24,12 +25,13 @@ import java.util.stream.IntStream;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
+import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 public class GPT2 {
     public GPT2Config config;
     // the weights (parameters) of the model, and their sizes
     ParameterTensors params;
-    FloatBuffer params_memory;
+    FloatArray params_memory;
     public int num_parameters;
     // gradients of the weights
     public ParameterTensors grads;
@@ -39,7 +41,7 @@ public class GPT2 {
     FloatBuffer v_memory = null;
     // the activations of the model, and their sizes
     public ActivationTensors acts;
-    public FloatBuffer acts_memory = null;
+    public FloatArray acts_memory = null;
     int num_activations;
     // gradients of the activations
     ActivationTensors grads_acts;
@@ -102,10 +104,11 @@ public class GPT2 {
 
         // read in all the parameters from file
         ByteBuffer _params_memory = ByteBuffer.allocate(num_parameters * 4 /*sizeof(float)*/).order(ByteOrder.LITTLE_ENDIAN);
-        this.params_memory = _params_memory.asFloatBuffer();
-
         model_file.getChannel().read(_params_memory);
         model_file.close();
+
+        _params_memory.rewind();
+        this.params_memory = FloatArray.fromSegment(MemorySegment.ofBuffer(_params_memory.asFloatBuffer()));
 
         // other inits
         mean_loss = -1.0f; // -1.0f will designate no loss
@@ -133,7 +136,7 @@ public class GPT2 {
                 int wpe_t = wpe + t * C;
                 // add the two vectors and store the result in out[b,t,:]
                 for (int i = 0 ; i < C ; i++) {
-                    acts_memory.put(out_bt + i, params_memory.get(wte_ix + i) + params_memory.get(wpe_t + i));
+                    acts_memory.set(out_bt + i, params_memory.get(wte_ix + i) + params_memory.get(wpe_t + i));
                 }
             }
         }
@@ -188,11 +191,11 @@ public class GPT2 {
                 for (int i = 0 ; i < C ; i++) {
                     float n = (s * (acts_memory.get(x + i) - m)); // normalize
                     float o = n * params_memory.get(weight + i) + params_memory.get(bias + i); // scale and shift
-                    acts_memory.put(out_bt + i, o); // write
+                    acts_memory.set(out_bt + i, o); // write
                 }
                 // cache the mean and rstd for the backward pass later
-                acts_memory.put(mean + b * T + t, m);
-                acts_memory.put(rstd + b * T + t, s);
+                acts_memory.set(mean + b * T + t, m);
+                acts_memory.set(rstd + b * T + t, s);
             }
         }
     }
@@ -252,8 +255,19 @@ public class GPT2 {
                 // int b = bt / T;
                 // int t = bt % T;
                 // int bt = b * T + t;
-                MemorySegment params_memory = MemorySegment.ofBuffer(this.params_memory).asSlice(weight * Float.BYTES);
-                MemorySegment acts_memory = MemorySegment.ofBuffer(this.acts_memory).asSlice((inp + bt * C) * Float.BYTES);
+                MemorySegment params_memory = this.params_memory.getSegment().asSlice(weight * Float.BYTES);
+                MemorySegment acts_memory =  this.acts_memory.getSegment().asSlice((inp + bt * C) * Float.BYTES);
+                
+                float aa = this.acts_memory.get(inp + bt * C + 42);
+                MemorySegment ab = this.acts_memory.getSegment().asSlice((inp + bt * C) * Float.BYTES);
+                float ac = ab.getAtIndex(ValueLayout.JAVA_FLOAT.withOrder(ByteOrder.BIG_ENDIAN), 42);
+                float ad = acts_memory.getAtIndex(ValueLayout.JAVA_FLOAT.withOrder(ByteOrder.BIG_ENDIAN), 42);
+                
+                float pa = this.params_memory.get(weight + 42);
+                MemorySegment pb = this.params_memory.getSegment().asSlice(weight * Float.BYTES);
+                float pc = pb.getAtIndex(ValueLayout.JAVA_FLOAT.withOrder(ByteOrder.LITTLE_ENDIAN), 42);
+                float pd = params_memory.getAtIndex(ValueLayout.JAVA_FLOAT.withOrder(ByteOrder.LITTLE_ENDIAN), 42);
+                
                 IntStream.range(0, OC).parallel().forEach(o -> {
                     float val = (bias != -1) ? this.params_memory.get(bias + o) : 0.0f;
                     int i = 0;
@@ -274,10 +288,10 @@ public class GPT2 {
                             var p1 = FloatVector.fromMemorySegment(species, params_memory, (o * C + i + 1 * width) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
                             var p2 = FloatVector.fromMemorySegment(species, params_memory, (o * C + i + 2 * width) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
                             var p3 = FloatVector.fromMemorySegment(species, params_memory, (o * C + i + 3 * width) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
-                            sum0 = p0.fma(a0, sum0);
-                            sum1 = p1.fma(a1, sum1);
-                            sum2 = p2.fma(a2, sum2);
-                            sum3 = p3.fma(a3, sum3);
+                            sum0 = a0.fma(p0, sum0);
+                            sum1 = a1.fma(p1, sum1);
+                            sum2 = a2.fma(p2, sum2);
+                            sum3 = a3.fma(p3, sum3);
                         }
                         val += sum0.add(sum1).add(sum2).add(sum3).reduceLanes(VectorOperators.ADD);
                     }
@@ -297,7 +311,7 @@ public class GPT2 {
                     for (; i < C ; i++) {
                         val += this.acts_memory.get(inp + bt * C + i) * this.params_memory.get(weight + o * C + i);
                     }
-                    this.acts_memory.put(out + bt * OC + o, val);
+                    this.acts_memory.set(out + bt * OC + o, val);
                 });
             });
 //            }
@@ -324,7 +338,7 @@ public class GPT2 {
                     for (int i = 0 ; i < C ; i++) {
                         val += acts_memory.get(inp + bt * C + i) * params_memory.get(weight + o * C + i);
                     }
-                    acts_memory.put(out + bt * OC + o, val);
+                    acts_memory.set(out + bt * OC + o, val);
                 }
             });
 //            }
@@ -374,7 +388,7 @@ public class GPT2 {
                 // write back results to main memory
                 for (int ibt = 0; ibt < LOOP_UNROLL; ibt++) {
                     int bt = obt + ibt;
-                    acts_memory.put(out + bt * OC + o, result[ibt]);
+                    acts_memory.set(out + bt * OC + o, result[ibt]);
                 }
             }
         });
@@ -459,7 +473,7 @@ public class GPT2 {
                             maxval = val;
                         }
 
-                        acts_memory.put(preatt_bth + t2, val);
+                        acts_memory.set(preatt_bth + t2, val);
                     }
 
                     // pass 2: calculate the exp and keep track of sum
@@ -468,29 +482,29 @@ public class GPT2 {
                     for (int t2 = 0; t2 <= t; t2++) {
                         float expv = (float) Math.exp(acts_memory.get(preatt_bth + t2) - maxval);
                         expsum += expv;
-                        acts_memory.put(att_bth + t2, expv);
+                        acts_memory.set(att_bth + t2, expv);
                     }
                     float expsum_inv = expsum == 0.0f ? 0.0f : 1.0f / expsum;
 
                     // pass 3: normalize to get the softmax
                     for (int t2 = 0; t2 < T; t2++) {
                         if (t2 <= t) {
-                            acts_memory.put(att_bth + t2, acts_memory.get(att_bth + t2) * expsum_inv);
+                            acts_memory.set(att_bth + t2, acts_memory.get(att_bth + t2) * expsum_inv);
                         } else {
                             // causal attention mask. not strictly necessary to set to zero here
                             // only doing this explicitly for debugging and checking to PyTorch
-                            acts_memory.put(att_bth + t2, 0.0f);
+                            acts_memory.set(att_bth + t2, 0.0f);
                         }
                     }
 
                     // pass 4: accumulate weighted values into the output of attention
                     int out_bth = out + b * T * C + t * C + h * hs;
-                    for (int i = 0; i < hs; i++) { acts_memory.put(out_bth + i, 0.0f); }
+                    for (int i = 0; i < hs; i++) { acts_memory.set(out_bth + i, 0.0f); }
                     for (int t2 = 0; t2 <= t; t2++) {
                         int value_t2 = inp + b * T * C3 + t2 * C3 + h * hs + C*2; // +C*2 because it's value
                         float att_btht2 = acts_memory.get(att_bth + t2);
                         for (int i = 0; i < hs; i++) {
-                            acts_memory.put(out_bth + i, acts_memory.get(out_bth + i) + att_btht2 * acts_memory.get(value_t2 + i));
+                            acts_memory.set(out_bth + i, acts_memory.get(out_bth + i) + att_btht2 * acts_memory.get(value_t2 + i));
                         }
                     }
                 }
@@ -563,7 +577,7 @@ public class GPT2 {
         for (int i = 0 ; i < N ; i++) {
             float x = acts_memory.get(inp + i);
             float cube = 0.044715f * x * x * x;
-            acts_memory.put(out + i, 0.5f * x * (1.0f + (float) Math.tanh(GELU_SCALING_FACTOR * (x + cube))));
+            acts_memory.set(out + i, 0.5f * x * (1.0f + (float) Math.tanh(GELU_SCALING_FACTOR * (x + cube))));
         }
     }
 
@@ -590,7 +604,7 @@ public class GPT2 {
     // acts, acts, acts
     public void residual_forward(int out, int inp1, int inp2, int N) {
         for (int i = 0 ; i < N ; i++) {
-            acts_memory.put(out + i, acts_memory.get(inp1 + i) + acts_memory.get(inp2 + i));
+            acts_memory.set(out + i, acts_memory.get(inp1 + i) + acts_memory.get(inp2 + i));
         }
     }
 
@@ -624,17 +638,17 @@ public class GPT2 {
                 }
                 float sum = 0.0f;
                 for (int i = 0 ; i < V ; i++) {
-                    acts_memory.put(probs_bt + i, (float) Math.exp(acts_memory.get(logits_bt + i) - maxval));
+                    acts_memory.set(probs_bt + i, (float) Math.exp(acts_memory.get(logits_bt + i) - maxval));
                     sum += acts_memory.get(probs_bt + i);
                 }
                 // note we only loop to V, leaving the padded dimensions
                 for (int i = 0 ; i < V ; i++) {
-                    acts_memory.put(probs_bt + i, acts_memory.get(probs_bt + i) / sum);
+                    acts_memory.set(probs_bt + i, acts_memory.get(probs_bt + i) / sum);
                 }
                 // for extra super safety we may wish to include this too,
                 // forcing the probabilities here to be zero, but it shouldn't matter
                 for (int i = V; i < Vp; i++) {
-                    acts_memory.put(probs_bt + i, 0.0f);
+                    acts_memory.set(probs_bt + i, 0.0f);
                 }
             }
         }
@@ -650,7 +664,7 @@ public class GPT2 {
                 // loss = -log(probs[target])
                 int probs_bt = probs + b * T * Vp + t * Vp;
                 int ix = targets.get(b * T + t);
-                acts_memory.put(losses + b * T + t, (float) -Math.log(acts_memory.get(probs_bt + ix)));
+                acts_memory.set(losses + b * T + t, (float) -Math.log(acts_memory.get(probs_bt + ix)));
             }
         }
     }
@@ -702,8 +716,7 @@ public class GPT2 {
 
             num_activations = acts.count;
             System.out.println("num_activations: " + num_activations);
-            ByteBuffer _acts_memory = ByteBuffer.allocate(num_activations * 4);
-            acts_memory = _acts_memory.asFloatBuffer();
+            acts_memory = FloatArray.fromArray(new float[num_activations]);
             // also create memory for caching inputs and targets
             this.inputs = IntBuffer.allocate(B * T);
             this.targets = IntBuffer.allocate(B * T); // might be unused if we never have targets but it's small
@@ -929,7 +942,7 @@ public class GPT2 {
             m_memory.put(i, m);
             v_memory.put(i, v);
 
-            params_memory.put(i, params_memory.get(i) - learning_rate * (m_hat / ((float) Math.sqrt(v_hat) + eps) + weight_decay * param));
+            params_memory.set(i, params_memory.get(i) - learning_rate * (m_hat / ((float) Math.sqrt(v_hat) + eps) + weight_decay * param));
         }
     }
 }
