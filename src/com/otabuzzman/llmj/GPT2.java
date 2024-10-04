@@ -256,9 +256,11 @@ public class GPT2 {
                 // int b = bt / T;
                 // int t = bt % T;
                 // int bt = b * T + t;
-                MemorySegment params_memory = this.params_memory.getSegment().asSlice(weight * Float.BYTES);
-                MemorySegment acts_memory =  this.acts_memory.getSegment().asSlice((inp + bt * C) * Float.BYTES);
+                MemorySegment params_memory = this.params_memory.getSegment();
+                int inp_base = inp + bt * C;
+                MemorySegment acts_memory =  this.acts_memory.getSegment();
                 IntStream.range(0, OC).parallel().forEach(o -> {
+                    int weight_base = weight + o * C;
                     float val = (bias != -1) ? this.params_memory.get(bias + o) : 0.0f;
                     int i = 0;
                     if (UseVectorAPI) {
@@ -267,19 +269,19 @@ public class GPT2 {
                         FloatVector sum1 = FloatVector.zero(species);
                         FloatVector sum2 = FloatVector.zero(species);
                         FloatVector sum3 = FloatVector.zero(species);
-                        int width = species.length();
-                        int upperBound = C - C % (4 * width);
-                        for (; i < upperBound; i += 4 * width) {
+                        int lanes = species.length();
+                        int upperBound = C - C % (4 * lanes);
+                        for (; i < upperBound; i += 4 * lanes) {
                             // native memory segment `acts_memory´ modified on `this´ machine has native byte order.
-                            var a0 = FloatVector.fromMemorySegment(species, acts_memory, (i + 0 * width) * Float.BYTES, ByteOrder.nativeOrder());
-                            var a1 = FloatVector.fromMemorySegment(species, acts_memory, (i + 1 * width) * Float.BYTES, ByteOrder.nativeOrder());
-                            var a2 = FloatVector.fromMemorySegment(species, acts_memory, (i + 2 * width) * Float.BYTES, ByteOrder.nativeOrder());
-                            var a3 = FloatVector.fromMemorySegment(species, acts_memory, (i + 3 * width) * Float.BYTES, ByteOrder.nativeOrder());
+                            var a0 = FloatVector.fromMemorySegment(species, acts_memory, (inp_base + i + 0 * lanes) * Float.BYTES, ByteOrder.nativeOrder());
+                            var a1 = FloatVector.fromMemorySegment(species, acts_memory, (inp_base + i + 1 * lanes) * Float.BYTES, ByteOrder.nativeOrder());
+                            var a2 = FloatVector.fromMemorySegment(species, acts_memory, (inp_base + i + 2 * lanes) * Float.BYTES, ByteOrder.nativeOrder());
+                            var a3 = FloatVector.fromMemorySegment(species, acts_memory, (inp_base + i + 3 * lanes) * Float.BYTES, ByteOrder.nativeOrder());
                             // native memory segment `params_memory´ was explicitly loaded with little-endian data.
-                            var p0 = FloatVector.fromMemorySegment(species, params_memory, (o * C + i + 0 * width) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
-                            var p1 = FloatVector.fromMemorySegment(species, params_memory, (o * C + i + 1 * width) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
-                            var p2 = FloatVector.fromMemorySegment(species, params_memory, (o * C + i + 2 * width) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
-                            var p3 = FloatVector.fromMemorySegment(species, params_memory, (o * C + i + 3 * width) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
+                            var p0 = FloatVector.fromMemorySegment(species, params_memory, (weight_base + i + 0 * lanes) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
+                            var p1 = FloatVector.fromMemorySegment(species, params_memory, (weight_base + i + 1 * lanes) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
+                            var p2 = FloatVector.fromMemorySegment(species, params_memory, (weight_base + i + 2 * lanes) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
+                            var p3 = FloatVector.fromMemorySegment(species, params_memory, (weight_base + i + 3 * lanes) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
                             sum0 = a0.fma(p0, sum0);
                             sum1 = a1.fma(p1, sum1);
                             sum2 = a2.fma(p2, sum2);
@@ -292,16 +294,16 @@ public class GPT2 {
                     int upperBound = C & ~3;
                     float[] sum = new float[4];
                     for (; i < upperBound ; i += 4) {
-                        sum[0] += this.acts_memory.get(inp + bt * C + i + 0) * this.params_memory.get(weight + o * C + i + 0);
-                        sum[1] += this.acts_memory.get(inp + bt * C + i + 1) * this.params_memory.get(weight + o * C + i + 1);
-                        sum[2] += this.acts_memory.get(inp + bt * C + i + 2) * this.params_memory.get(weight + o * C + i + 2);
-                        sum[3] += this.acts_memory.get(inp + bt * C + i + 3) * this.params_memory.get(weight + o * C + i + 3);
+                        sum[0] += this.acts_memory.get(inp_base + i + 0) * this.params_memory.get(weight_base + i + 0);
+                        sum[1] += this.acts_memory.get(inp_base + i + 1) * this.params_memory.get(weight_base + i + 1);
+                        sum[2] += this.acts_memory.get(inp_base + i + 2) * this.params_memory.get(weight_base + i + 2);
+                        sum[3] += this.acts_memory.get(inp_base + i + 3) * this.params_memory.get(weight_base + i + 3);
                     }
                     val += sum[0] + sum[1] + sum[2] + sum[3];
 
                     // process any tail elements
                     for (; i < C ; i++) {
-                        val += this.acts_memory.get(inp + bt * C + i) * this.params_memory.get(weight + o * C + i);
+                        val += this.acts_memory.get(inp_base + i) * this.params_memory.get(weight_base + i);
                     }
                     this.acts_memory.set(out + bt * OC + o, val);
                 });
