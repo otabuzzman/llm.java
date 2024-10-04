@@ -25,6 +25,7 @@ import java.util.stream.IntStream;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
+
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 public class GPT2 {
@@ -257,17 +258,6 @@ public class GPT2 {
                 // int bt = b * T + t;
                 MemorySegment params_memory = this.params_memory.getSegment().asSlice(weight * Float.BYTES);
                 MemorySegment acts_memory =  this.acts_memory.getSegment().asSlice((inp + bt * C) * Float.BYTES);
-                
-                float aa = this.acts_memory.get(inp + bt * C + 42);
-                MemorySegment ab = this.acts_memory.getSegment().asSlice((inp + bt * C) * Float.BYTES);
-                float ac = ab.getAtIndex(ValueLayout.JAVA_FLOAT.withOrder(ByteOrder.BIG_ENDIAN), 42);
-                float ad = acts_memory.getAtIndex(ValueLayout.JAVA_FLOAT.withOrder(ByteOrder.BIG_ENDIAN), 42);
-                
-                float pa = this.params_memory.get(weight + 42);
-                MemorySegment pb = this.params_memory.getSegment().asSlice(weight * Float.BYTES);
-                float pc = pb.getAtIndex(ValueLayout.JAVA_FLOAT.withOrder(ByteOrder.LITTLE_ENDIAN), 42);
-                float pd = params_memory.getAtIndex(ValueLayout.JAVA_FLOAT.withOrder(ByteOrder.LITTLE_ENDIAN), 42);
-                
                 IntStream.range(0, OC).parallel().forEach(o -> {
                     float val = (bias != -1) ? this.params_memory.get(bias + o) : 0.0f;
                     int i = 0;
@@ -280,10 +270,12 @@ public class GPT2 {
                         int width = species.length();
                         int upperBound = C - C % (4 * width);
                         for (; i < upperBound; i += 4 * width) {
-                            var a0 = FloatVector.fromMemorySegment(species, acts_memory, (i + 0 * width) * Float.BYTES, ByteOrder.BIG_ENDIAN);
-                            var a1 = FloatVector.fromMemorySegment(species, acts_memory, (i + 1 * width) * Float.BYTES, ByteOrder.BIG_ENDIAN);
-                            var a2 = FloatVector.fromMemorySegment(species, acts_memory, (i + 2 * width) * Float.BYTES, ByteOrder.BIG_ENDIAN);
-                            var a3 = FloatVector.fromMemorySegment(species, acts_memory, (i + 3 * width) * Float.BYTES, ByteOrder.BIG_ENDIAN);
+                            // native memory segment `acts_memory´ modified on `this´ machine has native byte order.
+                            var a0 = FloatVector.fromMemorySegment(species, acts_memory, (i + 0 * width) * Float.BYTES, ByteOrder.nativeOrder());
+                            var a1 = FloatVector.fromMemorySegment(species, acts_memory, (i + 1 * width) * Float.BYTES, ByteOrder.nativeOrder());
+                            var a2 = FloatVector.fromMemorySegment(species, acts_memory, (i + 2 * width) * Float.BYTES, ByteOrder.nativeOrder());
+                            var a3 = FloatVector.fromMemorySegment(species, acts_memory, (i + 3 * width) * Float.BYTES, ByteOrder.nativeOrder());
+                            // native memory segment `params_memory´ was explicitly loaded with little-endian data.
                             var p0 = FloatVector.fromMemorySegment(species, params_memory, (o * C + i + 0 * width) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
                             var p1 = FloatVector.fromMemorySegment(species, params_memory, (o * C + i + 1 * width) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
                             var p2 = FloatVector.fromMemorySegment(species, params_memory, (o * C + i + 2 * width) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
