@@ -257,8 +257,8 @@ public class GPT2 {
                 // int t = bt % T;
                 // int bt = b * T + t;
                 MemorySegment params_memory = this.params_memory.getSegment();
-                int inp_base = inp + bt * C;
                 MemorySegment acts_memory =  this.acts_memory.getSegment();
+                int inp_base = inp + bt * C;
                 IntStream.range(0, OC).parallel().forEach(o -> {
                     int weight_base = weight + o * C;
                     float val = (bias != -1) ? this.params_memory.get(bias + o) : 0.0f;
