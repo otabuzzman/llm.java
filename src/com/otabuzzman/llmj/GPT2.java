@@ -62,9 +62,9 @@ public class GPT2 {
         void apply(int out, int inp, int weight, int bias, int B, int T, int C, int OC);
     }
    
-    final MatmulForward matmul_forward = this::matmul_forward_vecapi;
-    // final MatmulForward matmul_forward = this::matmul_forward_simple;
-    // final MatmulForward matmul_forward = this::matmul_forward_default;
+    final MatmulForward matmulForward = this::matmul_forward_vecapi;
+    // final MatmulForward matmulForward = this::matmul_forward_naive;
+    // final MatmulForward matmulForward = this::matmul_forward;
    
     // llm.c: gpt2_build_from_checkpoint(...)
     public GPT2(String checkpoint_path) throws FileNotFoundException, IOException {
@@ -308,7 +308,7 @@ public class GPT2 {
 
     // acts, acts, params, params
     @SuppressWarnings("unused")
-    private void matmul_forward_simple(int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
+    private void matmul_forward_naive(int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
         // the most naive implementation of matrix multiplication
         // this serves as an algorithmic reference, and as a fallback for
         // unfriendly input shapes inside matmul_forward(), below.
@@ -335,7 +335,7 @@ public class GPT2 {
 
     // acts, acts, params, params
     @SuppressWarnings("unused")
-    private void matmul_forward_default(int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
+    private void matmul_forward(int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
         // most of the running time is spent here and in matmul_backward
         // therefore, the implementation below is very mildly optimized
         // this function is otherwise identical to that of matmul_forward_naive()
@@ -346,7 +346,7 @@ public class GPT2 {
         // make sure the tiled loop will be correct or fallback to naive version
         int LOOP_UNROLL = 8;
         if (B * T % LOOP_UNROLL != 0) {
-            matmul_forward_simple(out, inp, weight, bias, B, T, C, OC);
+            matmul_forward_naive(out, inp, weight, bias, B, T, C, OC);
             return;
         }
 
@@ -767,19 +767,19 @@ public class GPT2 {
 
             // now do the forward pass
             layernorm_forward(l_ln1, l_ln1_mean, l_ln1_rstd, residual, l_ln1w, l_ln1b, B, T, C);
-            matmul_forward.apply(l_qkv, l_ln1, l_qkvw, l_qkvb, B, T, C, 3 * C);
+            matmulForward.apply(l_qkv, l_ln1, l_qkvw, l_qkvb, B, T, C, 3 * C);
             attention_forward(l_atty, l_preatt, l_att, l_qkv, B, T, C, NH);
-            matmul_forward.apply(l_attproj, l_atty, l_attprojw, l_attprojb, B, T, C, C);
+            matmulForward.apply(l_attproj, l_atty, l_attprojw, l_attprojb, B, T, C, C);
             residual_forward(l_residual2, residual, l_attproj, B * T * C);
             layernorm_forward(l_ln2, l_ln2_mean, l_ln2_rstd, l_residual2, l_ln2w, l_ln2b, B, T, C);
-            matmul_forward.apply(l_fch, l_ln2, l_fcw, l_fcb, B, T, C, 4 * C);
+            matmulForward.apply(l_fch, l_ln2, l_fcw, l_fcb, B, T, C, 4 * C);
             gelu_forward(l_fch_gelu, l_fch, B * T * 4 * C);
-            matmul_forward.apply(l_fcproj, l_fch_gelu, l_fcprojw, l_fcprojb, B, T, 4 * C, C);
+            matmulForward.apply(l_fcproj, l_fch_gelu, l_fcprojw, l_fcprojb, B, T, 4 * C, C);
             residual_forward(l_residual3, l_residual2, l_fcproj, B * T * C);
         }
         residual = acts.residual3 + (L - 1) * B * T * C; // last residual is in residual3
         layernorm_forward(acts.lnf, acts.lnf_mean, acts.lnf_rstd, residual, params.lnfw, params.lnfb, B, T, C);
-        matmul_forward.apply(acts.logits, acts.lnf, params.wte, -1, B, T, C, Vp);
+        matmulForward.apply(acts.logits, acts.lnf, params.wte, -1, B, T, C, Vp);
         softmax_forward(acts.probs, acts.logits, B, T, V, Vp);
 
         // also forward the cross-entropy loss function if we have the targets
