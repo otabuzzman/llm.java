@@ -9,9 +9,11 @@ import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.rmi.UnexpectedException;
 
+import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+
 public class TestGpt2 {
 
-    private FloatBuffer grads_memory;
+    private FloatArray grads_memory;
     private FloatBuffer expected_grads_memory;
 
     // poor man's tensor checker

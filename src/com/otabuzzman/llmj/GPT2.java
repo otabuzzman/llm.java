@@ -24,7 +24,7 @@ import java.util.stream.IntStream;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
-
+import uk.ac.manchester.tornado.api.math.TornadoMath;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 public class GPT2 {
@@ -35,7 +35,7 @@ public class GPT2 {
     public int num_parameters;
     // gradients of the weights
     public ParameterTensors grads;
-    public FloatBuffer grads_memory = null;
+    public FloatArray grads_memory = null;
     // buffers for the AdamW optimizer
     FloatBuffer m_memory = null;
     FloatBuffer v_memory = null;
@@ -45,7 +45,7 @@ public class GPT2 {
     int num_activations;
     // gradients of the activations
     ActivationTensors grads_acts;
-    FloatBuffer grads_acts_memory = null;
+    FloatArray grads_acts_memory = null;
     // other run state configuration
     int batch_size = 0; // the batch size (B) of current forward pass
     int seq_len = 0; // the sequence length (T) of current forward pass
@@ -117,6 +117,103 @@ public class GPT2 {
     // -----------------------------------------------------------------
     // all the individual layers' forward and backward passes
     // B = batch_size, T = sequence_length, C = channels, V = vocab_size
+    // TornadoVM versions
+
+    private static void encoder_forward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int out, int wte, int wpe, int B, int T, int C) {
+        // inc value at magic position for rough functional testing
+        params.set(4711, params.get(4711) + 1);
+        acts.set(4711, params.get(4711) + 1);
+        grads.set(4711, params.get(4711) + 1);
+        grads_acts.set(4711, params.get(4711) + 1);
+    }
+    private static void layernorm_forward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int out, int mean, int rstd, int inp, int weight, int bias, int B, int T, int C) {
+        params.set(4711, params.get(4711) + 1);
+        acts.set(4711, params.get(4711) + 1);
+        grads.set(4711, params.get(4711) + 1);
+        grads_acts.set(4711, params.get(4711) + 1);
+    }
+    private static void matmul_forward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
+        params.set(4711, params.get(4711) + 1);
+        acts.set(4711, params.get(4711) + 1);
+        grads.set(4711, params.get(4711) + 1);
+        grads_acts.set(4711, params.get(4711) + 1);
+    }
+    private static void attention_forward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int out, int preatt, int att, int inp, int B, int T, int C, int NH) {
+        params.set(4711, params.get(4711) + 1);
+        acts.set(4711, params.get(4711) + 1);
+        grads.set(4711, params.get(4711) + 1);
+        grads_acts.set(4711, params.get(4711) + 1);
+    }
+    private static void gelu_forward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int out, int inp, int N) {
+        params.set(4711, params.get(4711) + 1);
+        acts.set(4711, params.get(4711) + 1);
+        grads.set(4711, params.get(4711) + 1);
+        grads_acts.set(4711, params.get(4711) + 1);
+    }
+    private static void residual_forward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int out, int inp1, int inp2, int N) {
+        params.set(4711, params.get(4711) + 1);
+        acts.set(4711, params.get(4711) + 1);
+        grads.set(4711, params.get(4711) + 1);
+        grads_acts.set(4711, params.get(4711) + 1);
+    }
+    private static void softmax_forward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int probs, int logits, int B, int T, int V, int Vp) {
+        params.set(4711, params.get(4711) + 1);
+        acts.set(4711, params.get(4711) + 1);
+        grads.set(4711, params.get(4711) + 1);
+        grads_acts.set(4711, params.get(4711) + 1);
+    }
+    private static void crossentropy_forward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int losses, int probs, int B, int T, int Vp) {
+        params.set(4711, params.get(4711) + 1);
+        acts.set(4711, params.get(4711) + 1);
+        grads.set(4711, params.get(4711) + 1);
+        grads_acts.set(4711, params.get(4711) + 1);
+    }
+    private static void encoder_backward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int dwte, int dwpe, int dout, int B, int T, int C) {
+        params.set(4711, params.get(4711) + 1);
+        acts.set(4711, params.get(4711) + 1);
+        grads.set(4711, params.get(4711) + 1);
+        grads_acts.set(4711, params.get(4711) + 1);
+    }
+    private static void layernorm_backward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int dinp, int dweight, int dbias, int dout, int inp, int weight, int mean, int rstd, int B, int T, int C) {
+        params.set(4711, params.get(4711) + 1);
+        acts.set(4711, params.get(4711) + 1);
+        grads.set(4711, params.get(4711) + 1);
+        grads_acts.set(4711, params.get(4711) + 1);
+    }
+    private static void matmul_backward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int dinp, int dweight, int dbias, int dout, int inp, int weight, int B, int T, int C, int OC) {
+        params.set(4711, params.get(4711) + 1);
+        acts.set(4711, params.get(4711) + 1);
+        grads.set(4711, params.get(4711) + 1);
+        grads_acts.set(4711, params.get(4711) + 1);
+    }
+    private static void attention_backward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int dinp, int dpreatt, int datt, int dout, int inp, int att, int B, int T, int C, int NH) {
+        params.set(4711, params.get(4711) + 1);
+        acts.set(4711, params.get(4711) + 1);
+        grads.set(4711, params.get(4711) + 1);
+        grads_acts.set(4711, params.get(4711) + 1);
+    }
+    private static void gelu_backward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int dinp, int inp, int dout, int N) {
+        params.set(4711, params.get(4711) + 1);
+        acts.set(4711, params.get(4711) + 1);
+        grads.set(4711, params.get(4711) + 1);
+        grads_acts.set(4711, params.get(4711) + 1);
+    }
+    private static void residual_backward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int dinp1, int dinp2, int dout, int N) {
+        params.set(4711, params.get(4711) + 1);
+        acts.set(4711, params.get(4711) + 1);
+        grads.set(4711, params.get(4711) + 1);
+        grads_acts.set(4711, params.get(4711) + 1);
+    }
+    private static void crossentropy_softmax_backward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int dlogits, int dlosses, int probs, int B, int T, int V, int Vp) {
+        params.set(4711, params.get(4711) + 1);
+        acts.set(4711, params.get(4711) + 1);
+        grads.set(4711, params.get(4711) + 1);
+        grads_acts.set(4711, params.get(4711) + 1);
+    }
+
+    // -----------------------------------------------------------------
+    // all the individual layers' forward and backward passes
+    // B = batch_size, T = sequence_length, C = channels, V = vocab_size
 
     // acts, params, params
     public void encoder_forward(int out, int wte, int wpe, int B, int T, int C) {
@@ -152,8 +249,8 @@ public class GPT2 {
                 int dwpe_t = dwpe + t * C;
                 for (int i = 0 ; i < C ; i++) {
                     float d = grads_acts_memory.get(dout_bt + i);
-                    grads_memory.put(dwte_ix + i, grads_memory.get(dwte_ix + i) + d);
-                    grads_memory.put(dwpe_t + i, grads_memory.get(dwpe_t + i) + d);
+                    grads_memory.set(dwte_ix + i, grads_memory.get(dwte_ix + i) + d);
+                    grads_memory.set(dwpe_t + i, grads_memory.get(dwpe_t + i) + d);
                 }
             }
         }
@@ -185,7 +282,7 @@ public class GPT2 {
                 }
                 v = v / C;
                 // calculate the rstd (reciprocal standard deviation)
-                float s = 1.0f / (float) Math.sqrt(v + eps);
+                float s = 1.0f / TornadoMath.sqrt(v + eps);
                 // seek to the output position in out[b,t,:]
                 int out_bt = out + b * T * C + t * C;
                 for (int i = 0 ; i < C ; i++) {
@@ -227,16 +324,16 @@ public class GPT2 {
                     float norm_bti = (acts_memory.get(inp_bt + i) - mean_bt) * rstd_bt;
                     float dnorm_i = params_memory.get(weight + i) * grads_acts_memory.get(dout_bt + i);
                     // gradient contribution to bias
-                    grads_memory.put(dbias + i, grads_memory.get(dbias + i) + grads_acts_memory.get(dout_bt + i));
+                    grads_memory.set(dbias + i, grads_memory.get(dbias + i) + grads_acts_memory.get(dout_bt + i));
                     // gradient contribution to weight
-                    grads_memory.put(dweight + i, grads_memory.get(dweight + i) + norm_bti * grads_acts_memory.get(dout_bt + i));
+                    grads_memory.set(dweight + i, grads_memory.get(dweight + i) + norm_bti * grads_acts_memory.get(dout_bt + i));
                     // gradient contribution to input
                     float dval = 0.0f;
                     dval += dnorm_i; // term 1
                     dval -= dnorm_mean; // term 2
                     dval -= norm_bti * dnorm_norm_mean; // term 3
                     dval *= rstd_bt; // final scale
-                    grads_acts_memory.put(dinp_bt + i, grads_acts_memory.get(dinp_bt + i) + dval);
+                    grads_acts_memory.set(dinp_bt + i, grads_acts_memory.get(dinp_bt + i) + dval);
                 }
             }
         }
@@ -406,7 +503,7 @@ public class GPT2 {
                     int wrow = weight + o * C;
                     float d = grads_acts_memory.get(dout_bt + o);
                     for (int i = 0; i < C; i++) {
-                        grads_acts_memory.put(dinp_bt + i, grads_acts_memory.get(dinp_bt + i) + params_memory.get(wrow + i) * d);
+                        grads_acts_memory.set(dinp_bt + i, grads_acts_memory.get(dinp_bt + i) + params_memory.get(wrow + i) * d);
                     }
                 }
             });
@@ -421,9 +518,9 @@ public class GPT2 {
                     int inp_bt = inp + b * T * C + t * C;
                     int dwrow = dweight + o*C;
                     float d = grads_acts_memory.get(dout_bt + o);
-                    if (dbias != -1) { grads_memory.put(dbias + o, grads_memory.get(dbias + o) + d); }
+                    if (dbias != -1) { grads_memory.set(dbias + o, grads_memory.get(dbias + o) + d); }
                     for (int i = 0 ; i < C ; i++) {
-                        grads_memory.put(dwrow + i, grads_memory.get(dwrow + i) + acts_memory.get(inp_bt + i) * d);
+                        grads_memory.set(dwrow + i, grads_memory.get(dwrow + i) + acts_memory.get(inp_bt + i) * d);
                     }
                 }
             }
@@ -441,7 +538,7 @@ public class GPT2 {
         // (and of course, no layer mixes information across batch)
         int C3 = C * 3;
         int hs = C / NH; // head size
-        float scale = 1.0f / (float) Math.sqrt(hs);
+        float scale = 1.0f / TornadoMath.sqrt(hs);
 
         // #pragma omp parallel for collapse(3)
         for (int b = 0 ; b < B ; b++) {
@@ -473,7 +570,7 @@ public class GPT2 {
                     // maxval is being calculated and subtracted only for numerical stability
                     float expsum = 0.0f;
                     for (int t2 = 0; t2 <= t; t2++) {
-                        float expv = (float) Math.exp(acts_memory.get(preatt_bth + t2) - maxval);
+                        float expv = TornadoMath.exp(acts_memory.get(preatt_bth + t2) - maxval);
                         expsum += expv;
                         acts_memory.set(att_bth + t2, expv);
                     }
@@ -512,7 +609,7 @@ public class GPT2 {
         // dout is (B, T, C)
         int C3 = C * 3;
         int hs = C / NH; // head size
-        float scale = 1.0f / (float) Math.sqrt(hs);
+        float scale = 1.0f / TornadoMath.sqrt(hs);
 
         for (int b = 0 ; b < B ; b++) {
             for (int t = 0 ; t < T ; t++) {
@@ -532,8 +629,8 @@ public class GPT2 {
                             // in the forward pass this was:
                             // out_bth[i] += att_bth[t2] * value_t2[i];
                             // so now we have:
-                            grads_acts_memory.put(datt_bth + t2, grads_acts_memory.get(datt_bth + t2) + acts_memory.get(value_t2 + i) * grads_acts_memory.get(dout_bth + i));
-                            grads_acts_memory.put(dvalue_t2 + i, grads_acts_memory.get(dvalue_t2 + i) + acts_memory.get(att_bth + t2) * grads_acts_memory.get(dout_bth + i));
+                            grads_acts_memory.set(datt_bth + t2, grads_acts_memory.get(datt_bth + t2) + acts_memory.get(value_t2 + i) * grads_acts_memory.get(dout_bth + i));
+                            grads_acts_memory.set(dvalue_t2 + i, grads_acts_memory.get(dvalue_t2 + i) + acts_memory.get(att_bth + t2) * grads_acts_memory.get(dout_bth + i));
                         }
                     }
 
@@ -543,7 +640,7 @@ public class GPT2 {
                         for (int t3 = 0 ; t3 <= t ; t3++) {
                             float indicator = t2 == t3 ? 1.0f : 0.0f;
                             float local_derivative = acts_memory.get(att_bth + t2) * (indicator - acts_memory.get(att_bth + t3));
-                            grads_acts_memory.put(dpreatt_bth + t3, grads_acts_memory.get(dpreatt_bth + t3) + local_derivative * grads_acts_memory.get(datt_bth + t2));
+                            grads_acts_memory.set(dpreatt_bth + t3, grads_acts_memory.get(dpreatt_bth + t3) + local_derivative * grads_acts_memory.get(datt_bth + t2));
                         }
                     }
 
@@ -555,8 +652,8 @@ public class GPT2 {
                             // in the forward pass this was:
                             // preatt_bth[t2] += (query_t[i] * key_t2[i]) * scale;
                             // so now we have:
-                            grads_acts_memory.put(dquery_t + i, grads_acts_memory.get(dquery_t + i) + acts_memory.get(key_t2 + i) * grads_acts_memory.get(dpreatt_bth + t2) * scale);
-                            grads_acts_memory.put(dkey_t2 + i, grads_acts_memory.get(dkey_t2 + i) + acts_memory.get(query_t + i) * grads_acts_memory.get(dpreatt_bth + t2) * scale);
+                            grads_acts_memory.set(dquery_t + i, grads_acts_memory.get(dquery_t + i) + acts_memory.get(key_t2 + i) * grads_acts_memory.get(dpreatt_bth + t2) * scale);
+                            grads_acts_memory.set(dkey_t2 + i, grads_acts_memory.get(dkey_t2 + i) + acts_memory.get(query_t + i) * grads_acts_memory.get(dpreatt_bth + t2) * scale);
                         }
                     }
                 }
@@ -570,7 +667,7 @@ public class GPT2 {
         for (int i = 0 ; i < N ; i++) {
             float x = acts_memory.get(inp + i);
             float cube = 0.044715f * x * x * x;
-            acts_memory.set(out + i, 0.5f * x * (1.0f + (float) Math.tanh(GELU_SCALING_FACTOR * (x + cube))));
+            acts_memory.set(out + i, 0.5f * x * (1.0f + TornadoMath.tanh(GELU_SCALING_FACTOR * (x + cube))));
         }
     }
 
@@ -585,11 +682,11 @@ public class GPT2 {
             float x = acts_memory.get(inp + i);
             float cube = 0.044715f * x * x * x;
             float tanh_arg = GELU_SCALING_FACTOR * (x + cube);
-            float tanh_out = (float) Math.tanh(tanh_arg);
-            float coshf_out = (float) Math.cosh(tanh_arg);
+            float tanh_out = TornadoMath.tanh(tanh_arg);
+            float coshf_out = (TornadoMath.exp(tanh_arg) + TornadoMath.exp(-tanh_arg)) / 2.0f; // due to missing TornadoMath.cosh()
             float sech_out = 1.0f / (coshf_out * coshf_out);
             float local_grad = 0.5f * (1.0f + tanh_out) + x * 0.5f * sech_out * GELU_SCALING_FACTOR * (1.0f + 3.0f * 0.044715f * x * x);
-            grads_acts_memory.put(dinp + i, grads_acts_memory.get(dinp + i) + local_grad * grads_acts_memory.get(dout + i));
+            grads_acts_memory.set(dinp + i, grads_acts_memory.get(dinp + i) + local_grad * grads_acts_memory.get(dout + i));
         }
     }
     // #pragma float_control(pop)
@@ -604,8 +701,8 @@ public class GPT2 {
     // grads_acts, grads_acts, grads_acts
     public void residual_backward(int dinp1, int dinp2, int dout, int N) {
         for (int i = 0 ; i < N ; i++) {
-            grads_acts_memory.put(dinp1 + i, grads_acts_memory.get(dinp1 + i) + grads_acts_memory.get(dout + i));
-            grads_acts_memory.put(dinp2 + i, grads_acts_memory.get(dinp2 + i) + grads_acts_memory.get(dout + i));
+            grads_acts_memory.set(dinp1 + i, grads_acts_memory.get(dinp1 + i) + grads_acts_memory.get(dout + i));
+            grads_acts_memory.set(dinp2 + i, grads_acts_memory.get(dinp2 + i) + grads_acts_memory.get(dout + i));
         }
     }
 
@@ -631,7 +728,7 @@ public class GPT2 {
                 }
                 float sum = 0.0f;
                 for (int i = 0 ; i < V ; i++) {
-                    acts_memory.set(probs_bt + i, (float) Math.exp(acts_memory.get(logits_bt + i) - maxval));
+                    acts_memory.set(probs_bt + i, TornadoMath.exp(acts_memory.get(logits_bt + i) - maxval));
                     sum += acts_memory.get(probs_bt + i);
                 }
                 // note we only loop to V, leaving the padded dimensions
@@ -657,7 +754,7 @@ public class GPT2 {
                 // loss = -log(probs[target])
                 int probs_bt = probs + b * T * Vp + t * Vp;
                 int ix = targets.get(b * T + t);
-                acts_memory.set(losses + b * T + t, (float) -Math.log(acts_memory.get(probs_bt + ix)));
+                acts_memory.set(losses + b * T + t, -TornadoMath.log(acts_memory.get(probs_bt + ix)));
             }
         }
     }
@@ -676,7 +773,7 @@ public class GPT2 {
                 for (int i = 0 ; i < V ; i++) {
                     float p = acts_memory.get(probs_bt + i);
                     float indicator = i == ix ? 1.0f : 0.0f;
-                    grads_acts_memory.put(dlogits_bt + i, grads_acts_memory.get(dlogits_bt + i) + (p - indicator) * dloss);
+                    grads_acts_memory.set(dlogits_bt + i, grads_acts_memory.get(dlogits_bt + i) + (p - indicator) * dloss);
                 }
             }
         }
@@ -785,7 +882,7 @@ public class GPT2 {
         layernorm_forward(acts.lnf, acts.lnf_mean, acts.lnf_rstd, residual, params.lnfw, params.lnfb, B, T, C);
         long t0 = System.currentTimeMillis();
         matmulForward.apply(acts.logits, acts.lnf, params.wte, -1, B, T, C, Vp);
-        System.err.printf("matmul_forward took %d ms\n", System.currentTimeMillis() - t0);
+        System.err.printf("final matmulForward took %d ms\n", System.currentTimeMillis() - t0);
         softmax_forward(acts.probs, acts.logits, B, T, V, Vp);
 
         // also forward the cross-entropy loss function if we have the targets
@@ -804,12 +901,12 @@ public class GPT2 {
     public void zero_grad() {
         if (grads_memory != null) {
             for (int i = 0 ; i < num_parameters ; i++) {
-                grads_memory.put(i, 0.0f);
+                grads_memory.set(i, 0.0f);
             }
         }
         if (grads_acts_memory != null) {
             for (int i = 0 ; i < num_activations ; i++) {
-                grads_acts_memory.put(i, 0.0f);
+                grads_acts_memory.set(i, 0.0f);
             }
         }
     }
@@ -829,19 +926,21 @@ public class GPT2 {
 
         if (grads_memory == null) {
             grads = new ParameterTensors(config);
-            grads_memory = FloatBuffer.allocate(params.count);
+            grads_memory = FloatArray.fromArray(new float[params.count]);
             grads_acts = new ActivationTensors(config, B, T);
-            grads_acts_memory = FloatBuffer.allocate(acts.count);
+            grads_acts_memory = FloatArray.fromArray(new float[acts.count]);
         }
 
         // we kick off the chain rule by filling in dlosses with 1.0f/(B*T)
         // technically this is a small, inline backward() pass of calculating
         // total, final loss as the mean over all losses over all (B,T) positions in the batch
         float dloss_mean = 1.0f / (B * T);
-        for (int i = 0 ; i < B * T ; i++) { grads_acts_memory.put(grads_acts.losses + i, dloss_mean); }
+        for (int i = 0 ; i < B * T ; i++) { grads_acts_memory.set(grads_acts.losses + i, dloss_mean); }
 
         crossentropy_softmax_backward(grads_acts.logits, grads_acts.losses, acts.probs, B, T, V, Vp);
+        long t0 = System.currentTimeMillis();
         matmul_backward(grads_acts.lnf, grads.wte, -1, grads_acts.logits, acts.lnf, params.wte, B, T, C, Vp);
+        System.err.printf("initial matmul_backward took %d ms\n", System.currentTimeMillis() - t0);
         int residual = acts.residual3 + (L - 1) * B * T * C; // last layer's residual
         int dresidual = grads_acts.residual3 + (L - 1) * B * T * C; // write to last layer's residual
         layernorm_backward(dresidual, grads.lnfw, grads.lnfb, grads_acts.lnf, residual, params.lnfw, acts.lnf_mean, acts.lnf_rstd, B, T, C);
@@ -930,14 +1029,14 @@ public class GPT2 {
             // update the second moment (RMSprop)
             float v = beta2 * v_memory.get(i) + (1.0f - beta2) * grad * grad;
             // bias-correct both moments
-            float m_hat = m / (1.0f - (float) Math.pow(beta1, t));
-            float v_hat = v / (1.0f - (float) Math.pow(beta2, t));
+            float m_hat = m / (1.0f - TornadoMath.pow(beta1, t));
+            float v_hat = v / (1.0f - TornadoMath.pow(beta2, t));
 
             // update
             m_memory.put(i, m);
             v_memory.put(i, v);
 
-            params_memory.set(i, params_memory.get(i) - learning_rate * (m_hat / ((float) Math.sqrt(v_hat) + eps) + weight_decay * param));
+            params_memory.set(i, params_memory.get(i) - learning_rate * (m_hat / (TornadoMath.sqrt(v_hat) + eps) + weight_decay * param));
         }
     }
 }
