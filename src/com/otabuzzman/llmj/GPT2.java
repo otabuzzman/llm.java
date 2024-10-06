@@ -24,6 +24,11 @@ import java.util.stream.IntStream;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
+import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
+import uk.ac.manchester.tornado.api.TaskGraph;
+import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
+import uk.ac.manchester.tornado.api.TornadoExecutionResult;
+import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
@@ -119,96 +124,79 @@ public class GPT2 {
     // B = batch_size, T = sequence_length, C = channels, V = vocab_size
     // TornadoVM versions
 
-    private static void encoder_forward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int out, int wte, int wpe, int B, int T, int C) {
+    private static void encoder_forward(FloatArray params, FloatArray acts, int out, int wte, int wpe, int B, int T, int C) {
         // inc value at magic position for rough functional testing
         params.set(4711, params.get(4711) + 1);
-        acts.set(4711, params.get(4711) + 1);
-        grads.set(4711, params.get(4711) + 1);
-        grads_acts.set(4711, params.get(4711) + 1);
+        acts.set(4711, acts.get(4711) + 1);
     }
-    private static void layernorm_forward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int out, int mean, int rstd, int inp, int weight, int bias, int B, int T, int C) {
+
+    private static void layernorm_forward(FloatArray params, FloatArray acts, int out, int mean, int rstd, int inp, int weight, int bias, int B, int T, int C) {
         params.set(4711, params.get(4711) + 1);
-        acts.set(4711, params.get(4711) + 1);
-        grads.set(4711, params.get(4711) + 1);
-        grads_acts.set(4711, params.get(4711) + 1);
+        acts.set(4711, acts.get(4711) + 1);
     }
-    private static void matmul_forward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
+
+    private static void matmul_forward(FloatArray params, FloatArray acts, int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
         params.set(4711, params.get(4711) + 1);
-        acts.set(4711, params.get(4711) + 1);
-        grads.set(4711, params.get(4711) + 1);
-        grads_acts.set(4711, params.get(4711) + 1);
+        acts.set(4711, acts.get(4711) + 1);
     }
-    private static void attention_forward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int out, int preatt, int att, int inp, int B, int T, int C, int NH) {
-        params.set(4711, params.get(4711) + 1);
-        acts.set(4711, params.get(4711) + 1);
-        grads.set(4711, params.get(4711) + 1);
-        grads_acts.set(4711, params.get(4711) + 1);
+
+    private static void attention_forward(FloatArray acts, int out, int preatt, int att, int inp, int B, int T, int C, int NH) {
+        acts.set(4711, acts.get(4711) + 1);
     }
-    private static void gelu_forward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int out, int inp, int N) {
-        params.set(4711, params.get(4711) + 1);
-        acts.set(4711, params.get(4711) + 1);
-        grads.set(4711, params.get(4711) + 1);
-        grads_acts.set(4711, params.get(4711) + 1);
+
+    private static void gelu_forward(FloatArray acts, int out, int inp, int N) {
+        acts.set(4711, acts.get(4711) + 1);
     }
-    private static void residual_forward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int out, int inp1, int inp2, int N) {
-        params.set(4711, params.get(4711) + 1);
-        acts.set(4711, params.get(4711) + 1);
-        grads.set(4711, params.get(4711) + 1);
-        grads_acts.set(4711, params.get(4711) + 1);
+
+    private static void residual_forward(FloatArray acts, int out, int inp1, int inp2, int N) {
+        acts.set(4711, acts.get(4711) + 1);
     }
-    private static void softmax_forward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int probs, int logits, int B, int T, int V, int Vp) {
-        params.set(4711, params.get(4711) + 1);
-        acts.set(4711, params.get(4711) + 1);
-        grads.set(4711, params.get(4711) + 1);
-        grads_acts.set(4711, params.get(4711) + 1);
+
+    private static void softmax_forward(FloatArray acts, int probs, int logits, int B, int T, int V, int Vp) {
+        acts.set(4711, acts.get(4711) + 1);
     }
-    private static void crossentropy_forward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int losses, int probs, int B, int T, int Vp) {
-        params.set(4711, params.get(4711) + 1);
-        acts.set(4711, params.get(4711) + 1);
-        grads.set(4711, params.get(4711) + 1);
-        grads_acts.set(4711, params.get(4711) + 1);
+
+    private static void crossentropy_forward(FloatArray acts, int losses, int probs, int B, int T, int Vp) {
+        acts.set(4711, acts.get(4711) + 1);
     }
-    private static void encoder_backward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int dwte, int dwpe, int dout, int B, int T, int C) {
-        params.set(4711, params.get(4711) + 1);
-        acts.set(4711, params.get(4711) + 1);
-        grads.set(4711, params.get(4711) + 1);
-        grads_acts.set(4711, params.get(4711) + 1);
+
+    private static void encoder_backward(FloatArray grads, FloatArray grads_acts, int dwte, int dwpe, int dout, int B, int T, int C) {
+        grads.set(4711, grads.get(4711) + 1);
+        grads_acts.set(4711, grads_acts.get(4711) + 1);
     }
+
     private static void layernorm_backward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int dinp, int dweight, int dbias, int dout, int inp, int weight, int mean, int rstd, int B, int T, int C) {
         params.set(4711, params.get(4711) + 1);
-        acts.set(4711, params.get(4711) + 1);
-        grads.set(4711, params.get(4711) + 1);
-        grads_acts.set(4711, params.get(4711) + 1);
+        acts.set(4711, acts.get(4711) + 1);
+        grads.set(4711, grads.get(4711) + 1);
+        grads_acts.set(4711, grads_acts.get(4711) + 1);
     }
+
     private static void matmul_backward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int dinp, int dweight, int dbias, int dout, int inp, int weight, int B, int T, int C, int OC) {
         params.set(4711, params.get(4711) + 1);
-        acts.set(4711, params.get(4711) + 1);
-        grads.set(4711, params.get(4711) + 1);
-        grads_acts.set(4711, params.get(4711) + 1);
+        acts.set(4711, acts.get(4711) + 1);
+        grads.set(4711, grads.get(4711) + 1);
+        grads_acts.set(4711, grads_acts.get(4711) + 1);
     }
-    private static void attention_backward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int dinp, int dpreatt, int datt, int dout, int inp, int att, int B, int T, int C, int NH) {
-        params.set(4711, params.get(4711) + 1);
-        acts.set(4711, params.get(4711) + 1);
-        grads.set(4711, params.get(4711) + 1);
-        grads_acts.set(4711, params.get(4711) + 1);
+
+    private static void attention_backward(FloatArray acts, FloatArray grads_acts, int dinp, int dpreatt, int datt, int dout, int inp, int att, int B, int T, int C, int NH) {
+        acts.set(4711, acts.get(4711) + 1);
+        grads_acts.set(4711, grads_acts.get(4711) + 1);
     }
-    private static void gelu_backward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int dinp, int inp, int dout, int N) {
-        params.set(4711, params.get(4711) + 1);
-        acts.set(4711, params.get(4711) + 1);
-        grads.set(4711, params.get(4711) + 1);
-        grads_acts.set(4711, params.get(4711) + 1);
+
+    private static void gelu_backward(FloatArray acts, FloatArray grads_acts, int dinp, int inp, int dout, int N) {
+        acts.set(4711, acts.get(4711) + 1);
+        grads_acts.set(4711, grads_acts.get(4711) + 1);
     }
-    private static void residual_backward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int dinp1, int dinp2, int dout, int N) {
-        params.set(4711, params.get(4711) + 1);
-        acts.set(4711, params.get(4711) + 1);
-        grads.set(4711, params.get(4711) + 1);
-        grads_acts.set(4711, params.get(4711) + 1);
+
+    private static void residual_backward(FloatArray acts, FloatArray grads_acts, int dinp1, int dinp2, int dout, int N) {
+        acts.set(4711, acts.get(4711) + 1);
+        grads_acts.set(4711, grads_acts.get(4711) + 1);
     }
-    private static void crossentropy_softmax_backward(FloatArray params, FloatArray acts, FloatArray grads, FloatArray grads_acts, int dlogits, int dlosses, int probs, int B, int T, int V, int Vp) {
-        params.set(4711, params.get(4711) + 1);
-        acts.set(4711, params.get(4711) + 1);
-        grads.set(4711, params.get(4711) + 1);
-        grads_acts.set(4711, params.get(4711) + 1);
+
+    private static void crossentropy_softmax_backward(FloatArray acts, FloatArray grads_acts, int dlogits, int dlosses, int probs, int B, int T, int V, int Vp) {
+        acts.set(4711, acts.get(4711) + 1);
+        grads_acts.set(4711, grads_acts.get(4711) + 1);
     }
 
     // -----------------------------------------------------------------
@@ -602,7 +590,7 @@ public class GPT2 {
         }
     }
 
-    // grads_act, grads_act, grads_act, grads_act, acts, acts
+    // grads_acts, grads_acts, grads_acts, grads_acts, acts, acts
     public void attention_backward(int dinp, int dpreatt, int datt, int dout, int inp, int att, int B, int T, int C, int NH) {
         // inp/dinp are (B, T, 3C) Q,K,V
         // att/datt/dpreatt are (B, NH, T, T)
@@ -830,7 +818,17 @@ public class GPT2 {
 
         int residual;
         // forward pass
-        encoder_forward(acts.encoded, params.wte, params.wpe, B, T, C); // encoding goes into residual[0]
+        // encoder_forward(acts.encoded, params.wte, params.wpe, B, T, C); // encoding goes into residual[0]
+
+        TaskGraph traphs[] = new TaskGraph[1 + L + 1];
+        int num_graphs = 0;
+        int num_tasks = 0;
+        traphs[num_graphs] = new TaskGraph("s" + num_graphs)
+        .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory, acts_memory)
+        .transferToDevice(DataTransferMode.FIRST_EXECUTION, grads_memory, grads_acts_memory)
+        .task("t" + num_tasks++, GPT2::encoder_forward, params_memory, acts_memory, acts.encoded, params.wte, params.wpe, B, T, C)
+        .transferToHost(DataTransferMode.UNDER_DEMAND, acts_memory);
+
         for (int l = 0 ; l < L ; l++) {
             residual = l == 0 ? acts.encoded : acts.residual3 + (l - 1) * B * T * C;
 
@@ -867,23 +865,52 @@ public class GPT2 {
             int l_residual3 = acts.residual3 + l * B * T * C;
 
             // now do the forward pass
-            layernorm_forward(l_ln1, l_ln1_mean, l_ln1_rstd, residual, l_ln1w, l_ln1b, B, T, C);
-            matmulForward.apply(l_qkv, l_ln1, l_qkvw, l_qkvb, B, T, C, 3 * C);
-            attention_forward(l_atty, l_preatt, l_att, l_qkv, B, T, C, NH);
-            matmulForward.apply(l_attproj, l_atty, l_attprojw, l_attprojb, B, T, C, C);
-            residual_forward(l_residual2, residual, l_attproj, B * T * C);
-            layernorm_forward(l_ln2, l_ln2_mean, l_ln2_rstd, l_residual2, l_ln2w, l_ln2b, B, T, C);
-            matmulForward.apply(l_fch, l_ln2, l_fcw, l_fcb, B, T, C, 4 * C);
-            gelu_forward(l_fch_gelu, l_fch, B * T * 4 * C);
-            matmulForward.apply(l_fcproj, l_fch_gelu, l_fcprojw, l_fcprojb, B, T, 4 * C, C);
-            residual_forward(l_residual3, l_residual2, l_fcproj, B * T * C);
+            // layernorm_forward(l_ln1, l_ln1_mean, l_ln1_rstd, residual, l_ln1w, l_ln1b, B, T, C);
+            // matmulForward.apply(l_qkv, l_ln1, l_qkvw, l_qkvb, B, T, C, 3 * C);
+            // attention_forward(l_atty, l_preatt, l_att, l_qkv, B, T, C, NH);
+            // matmulForward.apply(l_attproj, l_atty, l_attprojw, l_attprojb, B, T, C, C);
+            // residual_forward(l_residual2, residual, l_attproj, B * T * C);
+            // layernorm_forward(l_ln2, l_ln2_mean, l_ln2_rstd, l_residual2, l_ln2w, l_ln2b, B, T, C);
+            // matmulForward.apply(l_fch, l_ln2, l_fcw, l_fcb, B, T, C, 4 * C);
+            // gelu_forward(l_fch_gelu, l_fch, B * T * 4 * C);
+            // matmulForward.apply(l_fcproj, l_fch_gelu, l_fcprojw, l_fcprojb, B, T, 4 * C, C);
+            // residual_forward(l_residual3, l_residual2, l_fcproj, B * T * C);
+
+            num_graphs++;
+            traphs[num_graphs] = new TaskGraph("s" + num_graphs)
+            .task("t" + num_tasks++, GPT2::layernorm_forward, params_memory, acts_memory, l_ln1, l_ln1_mean, l_ln1_rstd, residual, l_ln1w, l_ln1b, B, T, C )
+            .task("t" + num_tasks++, GPT2::matmul_forward, params_memory, acts_memory, l_qkv, l_ln1, l_qkvw, l_qkvb, B, T, C, 3 * C)
+            .task("t" + num_tasks++, GPT2::attention_forward, acts_memory, l_atty, l_preatt, l_att, l_qkv, B, T, C, NH)
+            .task("t" + num_tasks++, GPT2::matmul_forward, params_memory, acts_memory, l_attproj, l_atty, l_attprojw, l_attprojb, B, T, C, C)
+            .task("t" + num_tasks++, GPT2::residual_forward, acts_memory, l_residual2, residual, l_attproj, B * T * C)
+            .task("t" + num_tasks++, GPT2::layernorm_forward, params_memory, acts_memory, l_ln2, l_ln2_mean, l_ln2_rstd, l_residual2, l_ln2w, l_ln2b, B, T, C)
+            .task("t" + num_tasks++, GPT2::matmul_forward, params_memory, acts_memory, l_fch, l_ln2, l_fcw, l_fcb, B, T, C, 4 * C)
+            .task("t" + num_tasks++, GPT2::gelu_forward, acts_memory, l_fch_gelu, l_fch, B * T * 4 * C)
+            .task("t" + num_tasks++, GPT2::matmul_forward, params_memory, acts_memory, l_fcproj, l_fch_gelu, l_fcprojw, l_fcprojb, B, T, 4 * C, C)
+            .task("t" + num_tasks++, GPT2::residual_forward, acts_memory, l_residual3, l_residual2, l_fcproj, B * T * C);
         }
         residual = acts.residual3 + (L - 1) * B * T * C; // last residual is in residual3
-        layernorm_forward(acts.lnf, acts.lnf_mean, acts.lnf_rstd, residual, params.lnfw, params.lnfb, B, T, C);
-        long t0 = System.currentTimeMillis();
-        matmulForward.apply(acts.logits, acts.lnf, params.wte, -1, B, T, C, Vp);
-        System.err.printf("final matmulForward took %d ms\n", System.currentTimeMillis() - t0);
-        softmax_forward(acts.probs, acts.logits, B, T, V, Vp);
+        // layernorm_forward(acts.lnf, acts.lnf_mean, acts.lnf_rstd, residual, params.lnfw, params.lnfb, B, T, C);
+        // long t0 = System.currentTimeMillis();
+        // matmulForward.apply(acts.logits, acts.lnf, params.wte, -1, B, T, C, Vp);
+        // System.err.printf("final matmulForward took %d ms\n", System.currentTimeMillis() - t0);
+        // softmax_forward(acts.probs, acts.logits, B, T, V, Vp);
+
+        num_graphs++;
+        traphs[L + 1] = new TaskGraph("s" + num_graphs)
+        .task("t" + num_tasks++, GPT2::layernorm_forward, params_memory, acts_memory, acts.lnf, acts.lnf_mean, acts.lnf_rstd, residual, params.lnfw, params.lnfb, B, T, C)
+        .task("t" + num_tasks++, GPT2::matmul_forward, params_memory, acts_memory, acts.logits, acts.lnf, params.wte, -1, B, T, C, Vp)
+        .task("t" + num_tasks++, GPT2::softmax_forward, acts_memory, acts.probs, acts.logits, B, T, V, Vp);
+
+        ImmutableTaskGraph graphs[] = new ImmutableTaskGraph[traphs.length];
+        for (int i = 0 ; i < traphs.length ; i++) {
+            graphs[i] = traphs[i].snapshot();
+        }
+
+        TornadoExecutionPlan model = new TornadoExecutionPlan(graphs);
+        TornadoExecutionResult result = model.execute();
+        result.transferToHost(acts_memory);
+        System.err.println(acts_memory.get(4711));
 
         // also forward the cross-entropy loss function if we have the targets
         if (targets != null) {
