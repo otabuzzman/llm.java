@@ -779,7 +779,9 @@ public class GPT2 {
         }
         residual = acts.residual3 + (L - 1) * B * T * C; // last residual is in residual3
         layernorm_forward(acts.lnf, acts.lnf_mean, acts.lnf_rstd, residual, params.lnfw, params.lnfb, B, T, C);
+        long t0 = System.currentTimeMillis();
         matmulForward.apply(acts.logits, acts.lnf, params.wte, -1, B, T, C, Vp);
+        System.err.printf("final matmulForward took %d ms\n", System.currentTimeMillis() - t0);
         softmax_forward(acts.probs, acts.logits, B, T, V, Vp);
 
         // also forward the cross-entropy loss function if we have the targets
@@ -835,7 +837,9 @@ public class GPT2 {
         for (int i = 0 ; i < B * T ; i++) { grads_acts_memory.put(grads_acts.losses + i, dloss_mean); }
 
         crossentropy_softmax_backward(grads_acts.logits, grads_acts.losses, acts.probs, B, T, V, Vp);
+        long t0 = System.currentTimeMillis();
         matmul_backward(grads_acts.lnf, grads.wte, -1, grads_acts.logits, acts.lnf, params.wte, B, T, C, Vp);
+        System.err.printf("initial matmul_backward took %d ms\n", System.currentTimeMillis() - t0);
         int residual = acts.residual3 + (L - 1) * B * T * C; // last layer's residual
         int dresidual = grads_acts.residual3 + (L - 1) * B * T * C; // write to last layer's residual
         layernorm_backward(dresidual, grads.lnfw, grads.lnfb, grads_acts.lnf, residual, params.lnfw, acts.lnf_mean, acts.lnf_rstd, B, T, C);
