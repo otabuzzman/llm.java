@@ -28,9 +28,11 @@ import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
 import uk.ac.manchester.tornado.api.TornadoExecutionResult;
+import uk.ac.manchester.tornado.api.annotations.Parallel;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.IntArray;
 
 public class GPT2 {
     public GPT2Config config;
@@ -54,8 +56,8 @@ public class GPT2 {
     // other run state configuration
     int batch_size = 0; // the batch size (B) of current forward pass
     int seq_len = 0; // the sequence length (T) of current forward pass
-    IntBuffer inputs = null; // the input tokens for the current forward pass
-    IntBuffer targets = null; // the target tokens for the current forward pass
+    IntArray inputs = null; // the input tokens for the current forward pass
+    IntArray targets = null; // the target tokens for the current forward pass
     public float mean_loss; // after a forward pass with targets, will be populated with the mean loss
 
     private final static float GELU_SCALING_FACTOR = (float) Math.sqrt(2.0f / Math.PI);
@@ -120,44 +122,215 @@ public class GPT2 {
     }
 
     // -----------------------------------------------------------------
-    // all the individual layers' forward and backward passes
+    // the individual TornadoVM layers' forward and backward passes
     // B = batch_size, T = sequence_length, C = channels, V = vocab_size
-    // TornadoVM versions
 
-    private static void encoder_forward(FloatArray params, FloatArray acts, int out, int wte, int wpe, int B, int T, int C) {
-        // inc value at magic position for rough functional testing
-        params.set(4711, params.get(4711) + 1);
-        acts.set(4711, acts.get(4711) + 1);
+    private static void encoder_forward(FloatArray params, FloatArray acts, IntArray inputs, int out, int wte, int wpe, int B, int T, int C) {
+        // out is (B,T,C). At each position (b,t), a C-dimensional vector summarizing token & position
+        // inp is (B,T) of integers, holding the token ids at each (b,t) position
+        // wte is (V,C) of token embeddings, short for "weight token embeddings"
+        // wpe is (maxT,C) of position embeddings, short for "weight positional embedding"
+        for (int b = 0 ; b < B ; b++) {
+            for (int t = 0 ; t < T ; t++) {
+                // seek to the output position in out[b,t,:]
+                int out_bt = out + b * T * C + t * C;
+                // get the index of the token at inp[b, t]
+                int ix = inputs.get(b * T + t);
+                // seek to the position in wte corresponding to the token
+                int wte_ix = wte + ix * C;
+                // seek to the position in wpe corresponding to the position
+                int wpe_t = wpe + t * C;
+                // add the two vectors and store the result in out[b,t,:]
+                for (int i = 0 ; i < C ; i++) {
+                    acts.set(out_bt + i, params.get(wte_ix + i) + params.get(wpe_t + i));
+                }
+            }
+        }
     }
 
     private static void layernorm_forward(FloatArray params, FloatArray acts, int out, int mean, int rstd, int inp, int weight, int bias, int B, int T, int C) {
-        params.set(4711, params.get(4711) + 1);
-        acts.set(4711, acts.get(4711) + 1);
+        // reference: https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html
+        // both inp and out are (B,T,C) of the activations
+        // mean and rstd are (B,T) buffers, to be used later in backward pass
+        // at each position (b,t) of the input, the C-dimensional vector
+        // of activations gets normalized, then scaled and shifted
+        float eps = 1e-5f;
+        for (@Parallel int b = 0 ; b < B ; b++) {
+            for (@Parallel int t = 0 ; t < T ; t++) {
+                // seek to the input position inp[b,t,:]
+                int x = inp + b * T * C + t * C;
+                // calculate the mean
+                float m = 0.0f;
+                for (int i = 0 ; i < C ; i++) {
+                    m += acts.get(x + i);
+                }
+                m = m / C;
+                // calculate the variance (without any bias correction)
+                float v = 0.0f;
+                for (int i = 0 ; i < C ; i++) {
+                    float xshift = acts.get(x + i) - m;
+                    v += xshift * xshift;
+                }
+                v = v / C;
+                // calculate the rstd (reciprocal standard deviation)
+                float s = 1.0f / TornadoMath.sqrt(v + eps);
+                // seek to the output position in out[b,t,:]
+                int out_bt = out + b * T * C + t * C;
+                for (int i = 0 ; i < C ; i++) {
+                    float n = (s * (acts.get(x + i) - m)); // normalize
+                    float o = n * params.get(weight + i) + params.get(bias + i); // scale and shift
+                    acts.set(out_bt + i, o); // write
+                }
+                // cache the mean and rstd for the backward pass later
+                acts.set(mean + b * T + t, m);
+                acts.set(rstd + b * T + t, s);
+            }
+        }
     }
 
     private static void matmul_forward(FloatArray params, FloatArray acts, int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
-        params.set(4711, params.get(4711) + 1);
-        acts.set(4711, acts.get(4711) + 1);
+        // the most naive implementation of matrix multiplication
+        // this serves as an algorithmic reference, and as a fallback for
+        // unfriendly input shapes inside matmul_forward(), below.
+        // #pragma omp parallel for collapse(2)
+        for (@Parallel int b = 0 ; b < B ; b++) {
+            for (@Parallel int t = 0 ; t < T ; t++) {
+                int bt = b * T + t;
+                for (@Parallel int o = 0 ; o < OC ; o++) {
+                    float val = (bias != -1) ? params.get(bias + o) : 0.0f;
+                    for (int i = 0 ; i < C ; i++) {
+                        val += acts.get(inp + bt * C + i) * params.get(weight + o * C + i);
+                    }
+                    acts.set(out + bt * OC + o, val);
+                }
+            }
+        }
     }
 
     private static void attention_forward(FloatArray acts, int out, int preatt, int att, int inp, int B, int T, int C, int NH) {
-        acts.set(4711, acts.get(4711) + 1);
+        // input is (B, T, 3C) holding the query, key, value (Q, K, V) vectors
+        // preatt, att are (B, NH, T, T). NH = number of heads, T = sequence length
+        // that holds the pre-attention and post-attention scores (used in backward)
+        // output is (B, T, C)
+        // attention is the only layer that mixes information across time
+        // every other operation is applied at every (b,t) position independently
+        // (and of course, no layer mixes information across batch)
+        int C3 = C * 3;
+        int hs = C / NH; // head size
+        float scale = 1.0f / TornadoMath.sqrt(hs);
+
+        // #pragma omp parallel for collapse(3)
+        for (@Parallel int b = 0 ; b < B ; b++) {
+            for (@Parallel int t = 0 ; t < T ; t++) {
+                for (@Parallel int h = 0 ; h < NH ; h++) {
+                    int query_t = inp + b * T * C3 + t * C3 + h * hs;
+                    int preatt_bth = preatt + b * NH * T * T + h * T * T + t * T;
+                    int att_bth = att + b * NH * T * T + h * T * T + t * T;
+
+                    // pass 1: calculate query dot key and maxval
+                    float maxval = -10000.0f; // TODO something better
+                    for (int t2 = 0; t2 <= t; t2++) {
+                        int key_t2 = inp + b * T * C3 + t2 * C3 + h * hs + C; // +C because it's key
+
+                        // (query_t) dot (key_t2)
+                        float val = 0.0f;
+                        for (int i = 0; i < hs; i++) {
+                            val += acts.get(query_t + i) * acts.get(key_t2 + i);
+                        }
+                        val *= scale;
+                        if (val > maxval) {
+                            maxval = val;
+                        }
+
+                        acts.set(preatt_bth + t2, val);
+                    }
+
+                    // pass 2: calculate the exp and keep track of sum
+                    // maxval is being calculated and subtracted only for numerical stability
+                    float expsum = 0.0f;
+                    for (int t2 = 0; t2 <= t; t2++) {
+                        float expv = TornadoMath.exp(acts.get(preatt_bth + t2) - maxval);
+                        expsum += expv;
+                        acts.set(att_bth + t2, expv);
+                    }
+                    float expsum_inv = expsum == 0.0f ? 0.0f : 1.0f / expsum;
+
+                    // pass 3: normalize to get the softmax
+                    for (int t2 = 0; t2 < T; t2++) {
+                        if (t2 <= t) {
+                            acts.set(att_bth + t2, acts.get(att_bth + t2) * expsum_inv);
+                        } else {
+                            // causal attention mask. not strictly necessary to set to zero here
+                            // only doing this explicitly for debugging and checking to PyTorch
+                            acts.set(att_bth + t2, 0.0f);
+                        }
+                    }
+
+                    // pass 4: accumulate weighted values into the output of attention
+                    int out_bth = out + b * T * C + t * C + h * hs;
+                    for (int i = 0; i < hs; i++) { acts.set(out_bth + i, 0.0f); }
+                    for (int t2 = 0; t2 <= t; t2++) {
+                        int value_t2 = inp + b * T * C3 + t2 * C3 + h * hs + C*2; // +C*2 because it's value
+                        float att_btht2 = acts.get(att_bth + t2);
+                        for (int i = 0; i < hs; i++) {
+                            acts.set(out_bth + i, acts.get(out_bth + i) + att_btht2 * acts.get(value_t2 + i));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private static void gelu_forward(FloatArray acts, int out, int inp, int N) {
-        acts.set(4711, acts.get(4711) + 1);
+        // (approximate) GeLU elementwise non-linearity in the MLP block of Transformer
+        for (@Parallel int i = 0 ; i < N ; i++) {
+            float x = acts.get(inp + i);
+            float cube = 0.044715f * x * x * x;
+            acts.set(out + i, 0.5f * x * (1.0f + TornadoMath.tanh(GELU_SCALING_FACTOR * (x + cube))));
+        }
     }
 
     private static void residual_forward(FloatArray acts, int out, int inp1, int inp2, int N) {
-        acts.set(4711, acts.get(4711) + 1);
+        for (@Parallel int i = 0 ; i < N ; i++) {
+            acts.set(out + i, acts.get(inp1 + i) + acts.get(inp2 + i));
+        }
     }
 
     private static void softmax_forward(FloatArray acts, int probs, int logits, int B, int T, int V, int Vp) {
-        acts.set(4711, acts.get(4711) + 1);
-    }
+        // output: probs are (B,T,Vp) of the probabilities (sums to 1.0 in each b,t position)
+        // input: logits is (B,T,Vp) of the unnormalized log probabilities
+        // Vp is the padded vocab size (for efficiency), V is the "real" vocab size
+        // example: Vp is 50304 and V is 50257
+        // #pragma omp parallel for collapse(2)
+        for (@Parallel int b = 0 ; b < B ; b++) {
+            for (@Parallel int t = 0 ; t < T ; t++) {
+                // probs <- softmax(logits)
+                int logits_bt = logits + b * T * Vp + t * Vp;
+                int probs_bt = probs + b * T * Vp + t * Vp;
 
-    private static void crossentropy_forward(FloatArray acts, int losses, int probs, int B, int T, int Vp) {
-        acts.set(4711, acts.get(4711) + 1);
+                // maxval is only calculated and subtracted for numerical stability
+                float maxval = -10000.0f; // TODO something better
+                for (int i = 0 ; i < V ; i++) {
+                    if (acts.get(logits_bt + i) > maxval) {
+                        maxval = acts.get(logits_bt + i);
+                    }
+                }
+                float sum = 0.0f;
+                for (int i = 0 ; i < V ; i++) {
+                    acts.set(probs_bt + i, TornadoMath.exp(acts.get(logits_bt + i) - maxval));
+                    sum += acts.get(probs_bt + i);
+                }
+                // note we only loop to V, leaving the padded dimensions
+                for (int i = 0 ; i < V ; i++) {
+                    acts.set(probs_bt + i, acts.get(probs_bt + i) / sum);
+                }
+                // for extra super safety we may wish to include this too,
+                // forcing the probabilities here to be zero, but it shouldn't matter
+                for (int i = V; i < Vp; i++) {
+                    acts.set(probs_bt + i, 0.0f);
+                }
+            }
+        }
     }
 
     private static void encoder_backward(FloatArray grads, FloatArray grads_acts, int dwte, int dwpe, int dout, int B, int T, int C) {
@@ -795,9 +968,6 @@ public class GPT2 {
             num_activations = acts.count;
             System.out.println("num_activations: " + num_activations);
             acts_memory = FloatArray.fromArray(new float[num_activations]);
-            // also create memory for caching inputs and targets
-            this.inputs = IntBuffer.allocate(B * T);
-            this.targets = IntBuffer.allocate(B * T); // might be unused if we never have targets but it's small
         } else {
             // validate B,T are not larger than the values used at initialisation
             // (smaller B,T are okay for inference only)
@@ -807,26 +977,22 @@ public class GPT2 {
         }
 
         // cache the inputs/targets
-        inputs.rewind();
-        this.inputs.rewind();
-        this.inputs.put(inputs);
+        this.inputs = IntArray.fromSegment(MemorySegment.ofBuffer(inputs));
         if (targets != null ) {
-            targets.rewind();
-            this.targets.rewind();
-            this.targets.put(targets);
+            this.targets = IntArray.fromSegment(MemorySegment.ofBuffer(targets));
         }
 
         int residual;
         // forward pass
         // encoder_forward(acts.encoded, params.wte, params.wpe, B, T, C); // encoding goes into residual[0]
-
-        TaskGraph traphs[] = new TaskGraph[1 + L + 1];
-        int num_graphs = 0;
-        int num_tasks = 0;
-        traphs[num_graphs] = new TaskGraph("s" + num_graphs)
+        TaskGraph draft_blocks[] = new TaskGraph[1 + L + 1];
+        int num_blocks = 0;
+        int num_layers = 0;
+        draft_blocks[num_blocks] = new TaskGraph("s" + num_blocks)
+        .transferToDevice(DataTransferMode.FIRST_EXECUTION, this.inputs)
         .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory, acts_memory)
         .transferToDevice(DataTransferMode.FIRST_EXECUTION, grads_memory, grads_acts_memory)
-        .task("t" + num_tasks++, GPT2::encoder_forward, params_memory, acts_memory, acts.encoded, params.wte, params.wpe, B, T, C)
+        .task("t" + num_layers++, GPT2::encoder_forward, params_memory, acts_memory, this.inputs, acts.encoded, params.wte, params.wpe, B, T, C)
         .transferToHost(DataTransferMode.UNDER_DEMAND, acts_memory);
 
         for (int l = 0 ; l < L ; l++) {
@@ -875,19 +1041,18 @@ public class GPT2 {
             // gelu_forward(l_fch_gelu, l_fch, B * T * 4 * C);
             // matmulForward.apply(l_fcproj, l_fch_gelu, l_fcprojw, l_fcprojb, B, T, 4 * C, C);
             // residual_forward(l_residual3, l_residual2, l_fcproj, B * T * C);
-
-            num_graphs++;
-            traphs[num_graphs] = new TaskGraph("s" + num_graphs)
-            .task("t" + num_tasks++, GPT2::layernorm_forward, params_memory, acts_memory, l_ln1, l_ln1_mean, l_ln1_rstd, residual, l_ln1w, l_ln1b, B, T, C )
-            .task("t" + num_tasks++, GPT2::matmul_forward, params_memory, acts_memory, l_qkv, l_ln1, l_qkvw, l_qkvb, B, T, C, 3 * C)
-            .task("t" + num_tasks++, GPT2::attention_forward, acts_memory, l_atty, l_preatt, l_att, l_qkv, B, T, C, NH)
-            .task("t" + num_tasks++, GPT2::matmul_forward, params_memory, acts_memory, l_attproj, l_atty, l_attprojw, l_attprojb, B, T, C, C)
-            .task("t" + num_tasks++, GPT2::residual_forward, acts_memory, l_residual2, residual, l_attproj, B * T * C)
-            .task("t" + num_tasks++, GPT2::layernorm_forward, params_memory, acts_memory, l_ln2, l_ln2_mean, l_ln2_rstd, l_residual2, l_ln2w, l_ln2b, B, T, C)
-            .task("t" + num_tasks++, GPT2::matmul_forward, params_memory, acts_memory, l_fch, l_ln2, l_fcw, l_fcb, B, T, C, 4 * C)
-            .task("t" + num_tasks++, GPT2::gelu_forward, acts_memory, l_fch_gelu, l_fch, B * T * 4 * C)
-            .task("t" + num_tasks++, GPT2::matmul_forward, params_memory, acts_memory, l_fcproj, l_fch_gelu, l_fcprojw, l_fcprojb, B, T, 4 * C, C)
-            .task("t" + num_tasks++, GPT2::residual_forward, acts_memory, l_residual3, l_residual2, l_fcproj, B * T * C);
+            num_blocks++;
+            draft_blocks[num_blocks] = new TaskGraph("s" + num_blocks)
+            .task("t" + num_layers++, GPT2::layernorm_forward, params_memory, acts_memory, l_ln1, l_ln1_mean, l_ln1_rstd, residual, l_ln1w, l_ln1b, B, T, C )
+            .task("t" + num_layers++, GPT2::matmul_forward, params_memory, acts_memory, l_qkv, l_ln1, l_qkvw, l_qkvb, B, T, C, 3 * C)
+            .task("t" + num_layers++, GPT2::attention_forward, acts_memory, l_atty, l_preatt, l_att, l_qkv, B, T, C, NH)
+            .task("t" + num_layers++, GPT2::matmul_forward, params_memory, acts_memory, l_attproj, l_atty, l_attprojw, l_attprojb, B, T, C, C)
+            .task("t" + num_layers++, GPT2::residual_forward, acts_memory, l_residual2, residual, l_attproj, B * T * C)
+            .task("t" + num_layers++, GPT2::layernorm_forward, params_memory, acts_memory, l_ln2, l_ln2_mean, l_ln2_rstd, l_residual2, l_ln2w, l_ln2b, B, T, C)
+            .task("t" + num_layers++, GPT2::matmul_forward, params_memory, acts_memory, l_fch, l_ln2, l_fcw, l_fcb, B, T, C, 4 * C)
+            .task("t" + num_layers++, GPT2::gelu_forward, acts_memory, l_fch_gelu, l_fch, B * T * 4 * C)
+            .task("t" + num_layers++, GPT2::matmul_forward, params_memory, acts_memory, l_fcproj, l_fch_gelu, l_fcprojw, l_fcprojb, B, T, 4 * C, C)
+            .task("t" + num_layers++, GPT2::residual_forward, acts_memory, l_residual3, l_residual2, l_fcproj, B * T * C);
         }
         residual = acts.residual3 + (L - 1) * B * T * C; // last residual is in residual3
         // layernorm_forward(acts.lnf, acts.lnf_mean, acts.lnf_rstd, residual, params.lnfw, params.lnfb, B, T, C);
@@ -895,21 +1060,20 @@ public class GPT2 {
         // matmulForward.apply(acts.logits, acts.lnf, params.wte, -1, B, T, C, Vp);
         // System.err.printf("final matmulForward took %d ms\n", System.currentTimeMillis() - t0);
         // softmax_forward(acts.probs, acts.logits, B, T, V, Vp);
+        num_blocks++;
+        draft_blocks[num_blocks] = new TaskGraph("s" + num_blocks)
+        .task("t" + num_layers++, GPT2::layernorm_forward, params_memory, acts_memory, acts.lnf, acts.lnf_mean, acts.lnf_rstd, residual, params.lnfw, params.lnfb, B, T, C)
+        .task("t" + num_layers++, GPT2::matmul_forward, params_memory, acts_memory, acts.logits, acts.lnf, params.wte, -1, B, T, C, Vp)
+        .task("t" + num_layers++, GPT2::softmax_forward, acts_memory, acts.probs, acts.logits, B, T, V, Vp);
 
-        num_graphs++;
-        traphs[L + 1] = new TaskGraph("s" + num_graphs)
-        .task("t" + num_tasks++, GPT2::layernorm_forward, params_memory, acts_memory, acts.lnf, acts.lnf_mean, acts.lnf_rstd, residual, params.lnfw, params.lnfb, B, T, C)
-        .task("t" + num_tasks++, GPT2::matmul_forward, params_memory, acts_memory, acts.logits, acts.lnf, params.wte, -1, B, T, C, Vp)
-        .task("t" + num_tasks++, GPT2::softmax_forward, acts_memory, acts.probs, acts.logits, B, T, V, Vp);
-
-        ImmutableTaskGraph graphs[] = new ImmutableTaskGraph[traphs.length];
-        for (int i = 0 ; i < traphs.length ; i++) {
-            graphs[i] = traphs[i].snapshot();
+        ImmutableTaskGraph model_blocks[] = new ImmutableTaskGraph[draft_blocks.length];
+        for (int i = 0 ; i < draft_blocks.length ; i++) {
+            model_blocks[i] = draft_blocks[i].snapshot();
         }
 
-        TornadoExecutionPlan model = new TornadoExecutionPlan(graphs);
-        TornadoExecutionResult result = model.execute();
-        result.transferToHost(acts_memory);
+        TornadoExecutionPlan model = new TornadoExecutionPlan(model_blocks);
+        TornadoExecutionResult tornadoExecutionResult = model.execute();
+        tornadoExecutionResult.transferToHost(acts_memory);
         System.err.println(acts_memory.get(4711));
 
         // also forward the cross-entropy loss function if we have the targets
