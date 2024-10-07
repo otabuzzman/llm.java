@@ -131,8 +131,8 @@ public class GPT2 {
         // inp is (B,T) of integers, holding the token ids at each (b,t) position
         // wte is (V,C) of token embeddings, short for "weight token embeddings"
         // wpe is (maxT,C) of position embeddings, short for "weight positional embedding"
-        for (int b = 0 ; b < B ; b++) {
-            for (int t = 0 ; t < T ; t++) {
+        for ( @Parallel int b = 0 ; b < B ; b++) {
+            for ( @Parallel int t = 0 ; t < T ; t++) {
                 // seek to the output position in out[b,t,:]
                 int out_bt = out + b * T * C + t * C;
                 // get the index of the token at inp[b, t]
@@ -1008,7 +1008,7 @@ public class GPT2 {
         int num_blocks = 0;
         int num_layers = 0;
         draft_blocks[num_blocks] = new TaskGraph("s" + num_blocks)
-        .transferToDevice(DataTransferMode.FIRST_EXECUTION, this.inputs, this.targets, params_memory, acts_memory, grads_memory, grads_acts_memory)
+        .transferToDevice(DataTransferMode.FIRST_EXECUTION, this.inputs, params_memory, acts_memory)
         .task("t" + num_layers++, GPT2::encoder_forward, params_memory, acts_memory, this.inputs, acts.encoded, params.wte, params.wpe, B, T, C)
         .transferToHost(DataTransferMode.UNDER_DEMAND, acts_memory);
 
@@ -1088,6 +1088,7 @@ public class GPT2 {
             num_blocks++; // should give draft_blocks.length + 1
             draft_blocks = Arrays.copyOf(draft_blocks, num_blocks);
             draft_blocks[num_blocks] = new TaskGraph("s" + num_blocks)
+            .transferToDevice(DataTransferMode.FIRST_EXECUTION, this.targets)
             .task("t" + num_layers++, GPT2::crossentropy_forward, acts_memory, this.targets, acts.losses, acts.probs, B, T, Vp);
         }
 
