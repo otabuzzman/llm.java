@@ -729,6 +729,7 @@ public class GPT2 {
 
         int residual;
         // forward pass
+        long t1 = System.currentTimeMillis();
         encoder_forward(acts.encoded, params.wte, params.wpe, B, T, C); // encoding goes into residual[0]
         for (int l = 0 ; l < L ; l++) {
             residual = l == 0 ? acts.encoded : acts.residual3 + (l - 1) * B * T * C;
@@ -795,6 +796,7 @@ public class GPT2 {
             // if we don't have targets, we don't have a loss
             mean_loss = -1.0f;
         }
+        System.err.printf("forward pass took %d ms\n", System.currentTimeMillis() - t1);
     }
 
     public void zero_grad() {
