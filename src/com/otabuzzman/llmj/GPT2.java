@@ -14,11 +14,13 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.lang.foreign.MemorySegment;
+import java.lang.reflect.Array;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.rmi.UnexpectedException;
+import java.util.Arrays;
 import java.util.stream.IntStream;
 
 import jdk.incubator.vector.FloatVector;
@@ -329,6 +331,20 @@ public class GPT2 {
                 for (int i = V; i < Vp; i++) {
                     acts.set(probs_bt + i, 0.0f);
                 }
+            }
+        }
+    }
+
+    private static void crossentropy_forward(FloatArray acts, IntArray targets, int losses, int probs, int B, int T, int Vp) {
+        // output: losses is (B,T) of the individual losses at each position
+        // input: probs are (B,T,Vp) of the probabilities
+        // input: targets is (B,T) of integers giving the correct index in logits
+        for (@Parallel int b = 0 ; b < B ; b++) {
+            for (@Parallel int t = 0 ; t < T ; t++) {
+                // loss = -log(probs[target])
+                int probs_bt = probs + b * T * Vp + t * Vp;
+                int ix = targets.get(b * T + t);
+                acts.set(losses + b * T + t, -TornadoMath.log(acts.get(probs_bt + ix)));
             }
         }
     }
@@ -968,6 +984,9 @@ public class GPT2 {
             num_activations = acts.count;
             System.out.println("num_activations: " + num_activations);
             acts_memory = FloatArray.fromArray(new float[num_activations]);
+            // also create memory for caching inputs and targets
+            this.inputs = IntArray.fromArray(new int[B * T]);
+            this.targets = IntArray.fromArray(new int[B * T]); // might be unused if we never have targets but it's small
         } else {
             // validate B,T are not larger than the values used at initialisation
             // (smaller B,T are okay for inference only)
@@ -977,21 +996,20 @@ public class GPT2 {
         }
 
         // cache the inputs/targets
-        this.inputs = IntArray.fromSegment(MemorySegment.ofBuffer(inputs));
+        for (int i = 0 ; i < inputs.capacity() ; i++) this.inputs.set(i, inputs.get(i));
         if (targets != null ) {
-            this.targets = IntArray.fromSegment(MemorySegment.ofBuffer(targets));
+            for (int i = 0 ; i < targets.capacity() ; i++) this.targets.set(i, targets.get(i));
         }
 
         int residual;
         // forward pass
         // encoder_forward(acts.encoded, params.wte, params.wpe, B, T, C); // encoding goes into residual[0]
+        long t0 = System.currentTimeMillis();
         TaskGraph draft_blocks[] = new TaskGraph[1 + L + 1];
         int num_blocks = 0;
         int num_layers = 0;
         draft_blocks[num_blocks] = new TaskGraph("s" + num_blocks)
-        .transferToDevice(DataTransferMode.FIRST_EXECUTION, this.inputs)
-        .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory, acts_memory)
-        .transferToDevice(DataTransferMode.FIRST_EXECUTION, grads_memory, grads_acts_memory)
+        .transferToDevice(DataTransferMode.FIRST_EXECUTION, this.inputs, this.targets, params_memory, acts_memory, grads_memory, grads_acts_memory)
         .task("t" + num_layers++, GPT2::encoder_forward, params_memory, acts_memory, this.inputs, acts.encoded, params.wte, params.wpe, B, T, C)
         .transferToHost(DataTransferMode.UNDER_DEMAND, acts_memory);
 
@@ -1066,19 +1084,30 @@ public class GPT2 {
         .task("t" + num_layers++, GPT2::matmul_forward, params_memory, acts_memory, acts.logits, acts.lnf, params.wte, -1, B, T, C, Vp)
         .task("t" + num_layers++, GPT2::softmax_forward, acts_memory, acts.probs, acts.logits, B, T, V, Vp);
 
-        ImmutableTaskGraph model_blocks[] = new ImmutableTaskGraph[draft_blocks.length];
-        for (int i = 0 ; i < draft_blocks.length ; i++) {
-            model_blocks[i] = draft_blocks[i].snapshot();
+        // also forward the cross-entropy loss function if we have the targets
+        if (targets != null) {
+            num_blocks++; // should give draft_blocks.length + 1
+            draft_blocks = Arrays.copyOf(draft_blocks, num_blocks);
+            draft_blocks[num_blocks] = new TaskGraph("s" + num_blocks)
+            .task("t" + num_layers++, GPT2::crossentropy_forward, acts_memory, this.targets, acts.losses, acts.probs, B, T, Vp);
         }
 
+        // TornadoVM requires immutable TaskGraphs for execution
+        ImmutableTaskGraph model_blocks[] = new ImmutableTaskGraph[num_blocks];
+        for (int i = 0 ; i < num_blocks ; i++) {
+            model_blocks[i] = draft_blocks[i].snapshot();
+        }
+        // build and execute the model
         TornadoExecutionPlan model = new TornadoExecutionPlan(model_blocks);
+        long t1 = System.currentTimeMillis();
         TornadoExecutionResult tornadoExecutionResult = model.execute();
-        tornadoExecutionResult.transferToHost(acts_memory);
-        System.err.println(acts_memory.get(4711));
+        long t2 = System.currentTimeMillis();
+        tornadoExecutionResult.transferToHost(acts_memory); // copy memory back to host
+        System.err.printf("forward pass took %d ms (%d ms executing on GPU)\n", System.currentTimeMillis() - t0, t2 - t1);
 
         // also forward the cross-entropy loss function if we have the targets
         if (targets != null) {
-            crossentropy_forward(acts.losses, acts.probs, B, T, Vp);
+            // crossentropy_forward(acts.losses, acts.probs, B, T, Vp);
             // for convenience also evaluate the mean loss
             mean_loss = 0.0f;
             for (int i = 0 ; i < B * T ; i++) { mean_loss += acts_memory.get(acts.losses + i); }
