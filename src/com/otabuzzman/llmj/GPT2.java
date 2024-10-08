@@ -695,7 +695,7 @@ public class GPT2 {
             }
         }
         // allocate space for all the activations if needed (done here, lazily)
-        if(acts_memory == null) {
+        if (acts_memory == null) {
             // record the current B,T as well
             batch_size = B;
             seq_len = T;

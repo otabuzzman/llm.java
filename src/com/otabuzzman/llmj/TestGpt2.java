@@ -146,7 +146,7 @@ public class TestGpt2 {
                         }
                     }
                 }
-                if(!logits_ok) { System.out.printf("NOT "); }
+                if (!logits_ok) { System.out.printf("NOT "); }
                 System.out.printf("OK (LOGITS), max_diff = %e\n", max_diff);
                 allok = allok && logits_ok;
 
