@@ -19,7 +19,6 @@ import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.rmi.UnexpectedException;
-import java.util.Arrays;
 import java.util.stream.IntStream;
 
 import jdk.incubator.vector.FloatVector;
@@ -111,7 +110,7 @@ public class GPT2 {
         System.out.println("num_parameters: " + num_parameters);
 
         // read in all the parameters from file
-        ByteBuffer _params_memory = ByteBuffer.allocate(num_parameters * 4 /*sizeof(float)*/).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer _params_memory = ByteBuffer.allocateDirect(num_parameters * 4 /*sizeof(float)*/).order(ByteOrder.LITTLE_ENDIAN);
         model_file.getChannel().read(_params_memory);
         model_file.close();
 
@@ -131,8 +130,8 @@ public class GPT2 {
         // inp is (B,T) of integers, holding the token ids at each (b,t) position
         // wte is (V,C) of token embeddings, short for "weight token embeddings"
         // wpe is (maxT,C) of position embeddings, short for "weight positional embedding"
-        for ( @Parallel int b = 0 ; b < B ; b++) {
-            for ( @Parallel int t = 0 ; t < T ; t++) {
+        for (@Parallel int b = 0 ; b < B ; b++) {
+            for (@Parallel int t = 0 ; t < T ; t++) {
                 // seek to the output position in out[b,t,:]
                 int out_bt = out + b * T * C + t * C;
                 // get the index of the token at inp[b, t]
@@ -1004,7 +1003,7 @@ public class GPT2 {
         // forward pass
         // encoder_forward(acts.encoded, params.wte, params.wpe, B, T, C); // encoding goes into residual[0]
         long t0 = System.currentTimeMillis();
-        TaskGraph draft_blocks[] = new TaskGraph[1 + L + 1];
+        TaskGraph draft_blocks[] = new TaskGraph[1 + L + 2];
         int num_blocks = 0;
         int num_layers = 0;
         draft_blocks[num_blocks] = new TaskGraph("s" + num_blocks)
@@ -1086,7 +1085,6 @@ public class GPT2 {
         // also forward the cross-entropy loss function if we have the targets
         if (targets != null) {
             num_blocks++; // should give draft_blocks.length + 1
-            draft_blocks = Arrays.copyOf(draft_blocks, num_blocks);
             draft_blocks[num_blocks] = new TaskGraph("s" + num_blocks)
             .transferToDevice(DataTransferMode.FIRST_EXECUTION, this.targets)
             .task("t" + num_layers++, GPT2::crossentropy_forward, acts_memory, this.targets, acts.losses, acts.probs, B, T, Vp);
