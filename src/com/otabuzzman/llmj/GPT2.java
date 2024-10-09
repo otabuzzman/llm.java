@@ -1001,13 +1001,12 @@ public class GPT2 {
 
         int residual;
         // forward pass
-        // encoder_forward(acts.encoded, params.wte, params.wpe, B, T, C); // encoding goes into residual[0]
         long t0 = System.currentTimeMillis();
         TaskGraph draft_blocks[] = new TaskGraph[1 + L + 2];
         int num_blocks = 0;
         int num_layers = 0;
         draft_blocks[num_blocks] = new TaskGraph("s" + num_blocks)
-        .transferToDevice(DataTransferMode.FIRST_EXECUTION, this.inputs, params_memory, acts_memory)
+        .transferToDevice(DataTransferMode.FIRST_EXECUTION, this.inputs, params_memory, acts_memory) // encoding goes into residual[0]
         .task("t" + num_layers++, GPT2::encoder_forward, params_memory, acts_memory, this.inputs, acts.encoded, params.wte, params.wpe, B, T, C)
         .transferToHost(DataTransferMode.UNDER_DEMAND, acts_memory);
 
@@ -1047,16 +1046,6 @@ public class GPT2 {
             int l_residual3 = acts.residual3 + l * B * T * C;
 
             // now do the forward pass
-            // layernorm_forward(l_ln1, l_ln1_mean, l_ln1_rstd, residual, l_ln1w, l_ln1b, B, T, C);
-            // matmulForward.apply(l_qkv, l_ln1, l_qkvw, l_qkvb, B, T, C, 3 * C);
-            // attention_forward(l_atty, l_preatt, l_att, l_qkv, B, T, C, NH);
-            // matmulForward.apply(l_attproj, l_atty, l_attprojw, l_attprojb, B, T, C, C);
-            // residual_forward(l_residual2, residual, l_attproj, B * T * C);
-            // layernorm_forward(l_ln2, l_ln2_mean, l_ln2_rstd, l_residual2, l_ln2w, l_ln2b, B, T, C);
-            // matmulForward.apply(l_fch, l_ln2, l_fcw, l_fcb, B, T, C, 4 * C);
-            // gelu_forward(l_fch_gelu, l_fch, B * T * 4 * C);
-            // matmulForward.apply(l_fcproj, l_fch_gelu, l_fcprojw, l_fcprojb, B, T, 4 * C, C);
-            // residual_forward(l_residual3, l_residual2, l_fcproj, B * T * C);
             num_blocks++;
             draft_blocks[num_blocks] = new TaskGraph("s" + num_blocks)
             .task("t" + num_layers++, GPT2::layernorm_forward, params_memory, acts_memory, l_ln1, l_ln1_mean, l_ln1_rstd, residual, l_ln1w, l_ln1b, B, T, C )
@@ -1071,11 +1060,6 @@ public class GPT2 {
             .task("t" + num_layers++, GPT2::residual_forward, acts_memory, l_residual3, l_residual2, l_fcproj, B * T * C);
         }
         residual = acts.residual3 + (L - 1) * B * T * C; // last residual is in residual3
-        // layernorm_forward(acts.lnf, acts.lnf_mean, acts.lnf_rstd, residual, params.lnfw, params.lnfb, B, T, C);
-        // long t0 = System.currentTimeMillis();
-        // matmulForward.apply(acts.logits, acts.lnf, params.wte, -1, B, T, C, Vp);
-        // System.err.printf("final matmulForward took %d ms\n", System.currentTimeMillis() - t0);
-        // softmax_forward(acts.probs, acts.logits, B, T, V, Vp);
         num_blocks++;
         draft_blocks[num_blocks] = new TaskGraph("s" + num_blocks)
         .task("t" + num_layers++, GPT2::layernorm_forward, params_memory, acts_memory, acts.lnf, acts.lnf_mean, acts.lnf_rstd, residual, params.lnfw, params.lnfb, B, T, C)
@@ -1103,10 +1087,8 @@ public class GPT2 {
         tornadoExecutionResult.transferToHost(acts_memory); // copy memory back to host
         System.err.printf("forward pass took %d ms (%d ms executing on GPU)\n", System.currentTimeMillis() - t0, t2 - t1);
 
-        // also forward the cross-entropy loss function if we have the targets
+        // for convenience also evaluate the mean loss if we have the targets
         if (targets != null) {
-            // crossentropy_forward(acts.losses, acts.probs, B, T, Vp);
-            // for convenience also evaluate the mean loss
             mean_loss = 0.0f;
             for (int i = 0 ; i < B * T ; i++) { mean_loss += acts_memory.get(acts.losses + i); }
             mean_loss /= B * T;
