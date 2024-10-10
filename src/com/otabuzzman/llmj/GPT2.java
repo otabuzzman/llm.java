@@ -838,6 +838,7 @@ public class GPT2 {
         float dloss_mean = 1.0f / (B * T);
         for (int i = 0 ; i < B * T ; i++) { grads_acts_memory.put(grads_acts.losses + i, dloss_mean); }
 
+        long t1 = System.currentTimeMillis();
         crossentropy_softmax_backward(grads_acts.logits, grads_acts.losses, acts.probs, B, T, V, Vp);
         long t0 = System.currentTimeMillis();
         matmul_backward(grads_acts.lnf, grads.wte, -1, grads_acts.logits, acts.lnf, params.wte, B, T, C, Vp);
@@ -910,6 +911,7 @@ public class GPT2 {
             layernorm_backward(dresidual, dl_ln1w, dl_ln1b, dl_ln1, residual, l_ln1w, l_ln1_mean, l_ln1_rstd, B, T, C);
         }
         encoder_backward(grads.wte, grads.wpe, grads_acts.encoded, B, T, C);
+        System.err.printf("backward pass took %d ms\n", System.currentTimeMillis() - t1);
     }
 
     public void update(float learning_rate, float beta1, float beta2, float eps, float weight_decay, int t) {
