@@ -995,15 +995,18 @@ public class GPT2 {
             for (int i = 0 ; i < targets.capacity() ; i++) this.targets.set(i, targets.get(i));
         }
 
-        int residual;
-        // forward pass
         IntArray p_lw = new IntArray(ParameterTensors.NUM_PARAMETER_TENSORS);
         IntArray p_la = new IntArray(ActivationTensors.NUM_ACTIVATION_TENSORS);
+        IntArray p_lr = new IntArray(1);
+
+        int residual;
+        // forward pass
         long t1 = System.currentTimeMillis();
         encoder_forward(acts.encoded, params.wte, params.wpe, B, T, C); // encoding goes into residual[0]
 
         for (int l = 0 ; l < L ; l++) {
-            residual = l == 0 ? acts.encoded : acts.residual3 + (l - 1) * B * T * C;
+            p_lr.set(0, l == 0 ? acts.encoded : acts.residual3 + (l - 1) * B * T * C);
+            residual = p_lr.get(0);
 
             // get the pointers of the weights for this layer
             params.copyForLayerAtIndex(l, p_lw);
@@ -1051,7 +1054,8 @@ public class GPT2 {
             matmulForward.apply(l_fcproj, l_fch_gelu, l_fcprojw, l_fcprojb, B, T, 4 * C, C);
             residual_forward(l_residual3, l_residual2, l_fcproj, B * T * C);
         }
-        residual = acts.residual3 + (L - 1) * B * T * C; // last residual is in residual3
+        p_lr.set(0, acts.residual3 + (L - 1) * B * T * C);
+        residual = p_lr.get(0); // last residual is in residual3
         layernorm_forward(acts.lnf, acts.lnf_mean, acts.lnf_rstd, residual, params.lnfw, params.lnfb, B, T, C);
         long t0 = System.currentTimeMillis();
         matmulForward.apply(acts.logits, acts.lnf, params.wte, -1, B, T, C, Vp);
@@ -1109,6 +1113,7 @@ public class GPT2 {
         IntArray p_la = new IntArray(ActivationTensors.NUM_ACTIVATION_TENSORS);
         IntArray p_dlw = new IntArray(ParameterTensors.NUM_PARAMETER_TENSORS);
         IntArray p_dla = new IntArray(ActivationTensors.NUM_ACTIVATION_TENSORS);
+        IntArray p_lr = new IntArray(2);
 
         // we kick off the chain rule by filling in dlosses with 1.0f/(B*T)
         // technically this is a small, inline backward() pass of calculating
@@ -1121,13 +1126,17 @@ public class GPT2 {
         long t0 = System.currentTimeMillis();
         matmul_backward(grads_acts.lnf, grads.wte, -1, grads_acts.logits, acts.lnf, params.wte, B, T, C, Vp);
         System.err.printf("initial matmul_backward took %d ms\n", System.currentTimeMillis() - t0);
-        int residual = acts.residual3 + (L - 1) * B * T * C; // last layer's residual
-        int dresidual = grads_acts.residual3 + (L - 1) * B * T * C; // write to last layer's residual
+        p_lr.set(0, acts.residual3 + (L - 1) * B * T * C);
+        p_lr.set(1, grads_acts.residual3 + (L - 1) * B * T * C);
+        int residual = p_lr.get(0); // last layer's residual
+        int dresidual = p_lr.get(1); // write to last layer's residual
         layernorm_backward(dresidual, grads.lnfw, grads.lnfb, grads_acts.lnf, residual, params.lnfw, acts.lnf_mean, acts.lnf_rstd, B, T, C);
 
         for (int l = L - 1 ; l >= 0 ; l--) {
-            residual = l == 0 ? acts.encoded : acts.residual3 + (l - 1) * B * T * C;
-            dresidual = l == 0 ? grads_acts.encoded : grads_acts.residual3 + (l - 1) * B * T * C;
+            p_lr.set(0, l == 0 ? acts.encoded : acts.residual3 + (l - 1) * B * T * C);
+            p_lr.set(1, l == 0 ? grads_acts.encoded : grads_acts.residual3 + (l - 1) * B * T * C);
+            residual = p_lr.get(0);
+            dresidual = p_lr.get(1);
 
             // get the pointers of the weights for this layer
             params.copyForLayerAtIndex(l, p_lw);
