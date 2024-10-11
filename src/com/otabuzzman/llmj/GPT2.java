@@ -515,68 +515,59 @@ public class GPT2 {
     private void matmul_forward_vecapi(int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
         // Java vector API implementation of matrix multiplication
         // #pragma omp parallel for collapse(2)
-//       for (int b = 0 ; b < B ; b++) {
-//           for (int t = 0 ; t < T ; t++) {
-//               int bt = b * T + t;
-            IntStream.range(0, B * T).parallel().forEach( bt -> {
-                // unroll bt to b, t
-                // int b = bt / T;
-                // int t = bt % T;
-                // int bt = b * T + t;
-                MemorySegment params_memory = this.params_memory.getSegment();
-                MemorySegment acts_memory =  this.acts_memory.getSegment();
-                int inp_base = inp + bt * C;
-                IntStream.range(0, OC).parallel().forEach(o -> {
-                    int weight_base = weight + o * C;
-                    float val = (bias != -1) ? this.params_memory.get(bias + o) : 0.0f;
-                    int i = 0;
-                    if (UseVectorAPI) {
-                        VectorSpecies<Float> species = FloatVector.SPECIES_MAX;
-                        FloatVector sum0 = FloatVector.zero(species);
-                        FloatVector sum1 = FloatVector.zero(species);
-                        FloatVector sum2 = FloatVector.zero(species);
-                        FloatVector sum3 = FloatVector.zero(species);
-                        int lanes = species.length();
-                        int upperBound = C - C % (4 * lanes);
-                        for (; i < upperBound; i += 4 * lanes) {
-                            // native memory segment `acts_memory´ modified on `this´ machine has native byte order.
-                            var a0 = FloatVector.fromMemorySegment(species, acts_memory, (inp_base + i + 0 * lanes) * Float.BYTES, ByteOrder.nativeOrder());
-                            var a1 = FloatVector.fromMemorySegment(species, acts_memory, (inp_base + i + 1 * lanes) * Float.BYTES, ByteOrder.nativeOrder());
-                            var a2 = FloatVector.fromMemorySegment(species, acts_memory, (inp_base + i + 2 * lanes) * Float.BYTES, ByteOrder.nativeOrder());
-                            var a3 = FloatVector.fromMemorySegment(species, acts_memory, (inp_base + i + 3 * lanes) * Float.BYTES, ByteOrder.nativeOrder());
-                            // native memory segment `params_memory´ was explicitly loaded with little-endian data.
-                            var p0 = FloatVector.fromMemorySegment(species, params_memory, (weight_base + i + 0 * lanes) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
-                            var p1 = FloatVector.fromMemorySegment(species, params_memory, (weight_base + i + 1 * lanes) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
-                            var p2 = FloatVector.fromMemorySegment(species, params_memory, (weight_base + i + 2 * lanes) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
-                            var p3 = FloatVector.fromMemorySegment(species, params_memory, (weight_base + i + 3 * lanes) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
-                            sum0 = a0.fma(p0, sum0);
-                            sum1 = a1.fma(p1, sum1);
-                            sum2 = a2.fma(p2, sum2);
-                            sum3 = a3.fma(p3, sum3);
-                        }
-                        val += sum0.add(sum1).add(sum2).add(sum3).reduceLanes(VectorOperators.ADD);
+        IntStream.range(0, B * T).parallel().forEach( bt -> {
+            MemorySegment params_memory = this.params_memory.getSegment();
+            MemorySegment acts_memory =  this.acts_memory.getSegment();
+            int inp_base = inp + bt * C;
+            IntStream.range(0, OC).parallel().forEach(o -> {
+                int weight_base = weight + o * C;
+                float val = (bias != -1) ? this.params_memory.get(bias + o) : 0.0f;
+                int i = 0;
+                if (UseVectorAPI) {
+                    VectorSpecies<Float> species = FloatVector.SPECIES_MAX;
+                    FloatVector sum0 = FloatVector.zero(species);
+                    FloatVector sum1 = FloatVector.zero(species);
+                    FloatVector sum2 = FloatVector.zero(species);
+                    FloatVector sum3 = FloatVector.zero(species);
+                    int lanes = species.length();
+                    int upperBound = C - C % (4 * lanes);
+                    for (; i < upperBound; i += 4 * lanes) {
+                        // native memory segment `acts_memory´ modified on `this´ machine has native byte order.
+                        var a0 = FloatVector.fromMemorySegment(species, acts_memory, (inp_base + i + 0 * lanes) * Float.BYTES, ByteOrder.nativeOrder());
+                        var a1 = FloatVector.fromMemorySegment(species, acts_memory, (inp_base + i + 1 * lanes) * Float.BYTES, ByteOrder.nativeOrder());
+                        var a2 = FloatVector.fromMemorySegment(species, acts_memory, (inp_base + i + 2 * lanes) * Float.BYTES, ByteOrder.nativeOrder());
+                        var a3 = FloatVector.fromMemorySegment(species, acts_memory, (inp_base + i + 3 * lanes) * Float.BYTES, ByteOrder.nativeOrder());
+                        // native memory segment `params_memory´ was explicitly loaded with little-endian data.
+                        var p0 = FloatVector.fromMemorySegment(species, params_memory, (weight_base + i + 0 * lanes) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
+                        var p1 = FloatVector.fromMemorySegment(species, params_memory, (weight_base + i + 1 * lanes) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
+                        var p2 = FloatVector.fromMemorySegment(species, params_memory, (weight_base + i + 2 * lanes) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
+                        var p3 = FloatVector.fromMemorySegment(species, params_memory, (weight_base + i + 3 * lanes) * Float.BYTES, ByteOrder.LITTLE_ENDIAN);
+                        sum0 = a0.fma(p0, sum0);
+                        sum1 = a1.fma(p1, sum1);
+                        sum2 = a2.fma(p2, sum2);
+                        sum3 = a3.fma(p3, sum3);
                     }
+                    val += sum0.add(sum1).add(sum2).add(sum3).reduceLanes(VectorOperators.ADD);
+                }
 
-                    // JIT compiler's auto-vectorization
-                    int upperBound = C & ~3;
-                    float[] sum = new float[4];
-                    for (; i < upperBound ; i += 4) {
-                        sum[0] += this.acts_memory.get(inp_base + i + 0) * this.params_memory.get(weight_base + i + 0);
-                        sum[1] += this.acts_memory.get(inp_base + i + 1) * this.params_memory.get(weight_base + i + 1);
-                        sum[2] += this.acts_memory.get(inp_base + i + 2) * this.params_memory.get(weight_base + i + 2);
-                        sum[3] += this.acts_memory.get(inp_base + i + 3) * this.params_memory.get(weight_base + i + 3);
-                    }
-                    val += sum[0] + sum[1] + sum[2] + sum[3];
+                // JIT compiler's auto-vectorization
+                int upperBound = C & ~3;
+                float[] sum = new float[4];
+                for (; i < upperBound ; i += 4) {
+                    sum[0] += this.acts_memory.get(inp_base + i + 0) * this.params_memory.get(weight_base + i + 0);
+                    sum[1] += this.acts_memory.get(inp_base + i + 1) * this.params_memory.get(weight_base + i + 1);
+                    sum[2] += this.acts_memory.get(inp_base + i + 2) * this.params_memory.get(weight_base + i + 2);
+                    sum[3] += this.acts_memory.get(inp_base + i + 3) * this.params_memory.get(weight_base + i + 3);
+                }
+                val += sum[0] + sum[1] + sum[2] + sum[3];
 
-                    // process any tail elements
-                    for (; i < C ; i++) {
-                        val += this.acts_memory.get(inp_base + i) * this.params_memory.get(weight_base + i);
-                    }
-                    this.acts_memory.set(out + bt * OC + o, val);
-                });
+                // process any tail elements
+                for (; i < C ; i++) {
+                    val += this.acts_memory.get(inp_base + i) * this.params_memory.get(weight_base + i);
+                }
+                this.acts_memory.set(out + bt * OC + o, val);
             });
-//            }
-//        }
+        });
     }
 
     // acts, acts, params, params
@@ -586,24 +577,19 @@ public class GPT2 {
         // this serves as an algorithmic reference, and as a fallback for
         // unfriendly input shapes inside matmul_forward(), below.
         // #pragma omp parallel for collapse(2)
-//        for (int b = 0 ; b < B ; b++) {
-//            for (int t = 0 ; t < T ; t++) {
-//                int bt = b * T + t;
-            IntStream.range(0, B * T).parallel().forEach( bt -> {
-                // unroll bt to b, t
-                // int b = bt / T;
-                // int t = bt % T;
-                // int bt = b * T + t;
-                for (int o = 0 ; o < OC ; o++) {
-                    float val = (bias != -1) ? params_memory.get(bias + o) : 0.0f;
-                    for (int i = 0 ; i < C ; i++) {
-                        val += acts_memory.get(inp + bt * C + i) * params_memory.get(weight + o * C + i);
-                    }
-                    acts_memory.set(out + bt * OC + o, val);
+        IntStream.range(0, B * T).parallel().forEach( bt -> {
+            // unroll bt to b, t
+            // int b = bt / T;
+            // int t = bt % T;
+            // int bt = b * T + t;
+            for (int o = 0 ; o < OC ; o++) {
+                float val = (bias != -1) ? params_memory.get(bias + o) : 0.0f;
+                for (int i = 0 ; i < C ; i++) {
+                    val += acts_memory.get(inp + bt * C + i) * params_memory.get(weight + o * C + i);
                 }
-            });
-//            }
-//        }
+                acts_memory.set(out + bt * OC + o, val);
+            }
+        });
     }
 
     // acts, acts, params, params
@@ -626,7 +612,6 @@ public class GPT2 {
         // collapse the B and T loops into one and turn it into a strided loop.
         // then we can tile the inner loop, and reuse the loaded weight LOOP_UNROLL many times
         // #pragma omp parallel for
-//        for (int obt = 0; obt < B * T; obt += LOOP_UNROLL) {
         IntStream.range(0, B * T / LOOP_UNROLL).parallel().forEach( obt -> {
             obt *= LOOP_UNROLL;
             for (int o = 0; o < OC; o++) {
@@ -663,25 +648,19 @@ public class GPT2 {
 
         // backward into inp first, parallelize over B,T
         // #pragma omp parallel for collapse(2)
-//        for (int b = 0 ; b < B ; b++) {
-//            for (int t = 0 ; t < T ; t++) {
-            IntStream.range(0, B * T).parallel().forEach( x -> {
-                int b = x / T;
-                int t = x % T;
-                int dout_bt = dout + b * T * OC + t * OC;
-                int dinp_bt = dinp + b * T * C + t * C;
-                for (int o = 0 ; o < OC ; o++) {
-                    int wrow = weight + o * C;
-                    float d = grads_acts_memory.get(dout_bt + o);
-                    for (int i = 0; i < C; i++) {
-                        grads_acts_memory.set(dinp_bt + i, grads_acts_memory.get(dinp_bt + i) + params_memory.get(wrow + i) * d);
-                    }
+        IntStream.range(0, B * T).parallel().forEach( x -> {
+            int b = x / T;
+            int t = x % T;
+            int dout_bt = dout + b * T * OC + t * OC;
+            int dinp_bt = dinp + b * T * C + t * C;
+            for (int o = 0 ; o < OC ; o++) {
+                int wrow = weight + o * C;
+                float d = grads_acts_memory.get(dout_bt + o);
+                for (int i = 0; i < C; i++) {
+                    grads_acts_memory.set(dinp_bt + i, grads_acts_memory.get(dinp_bt + i) + params_memory.get(wrow + i) * d);
                 }
-            });
-//        }
-        // backward into weight/bias, parallelize over output channels OC
-        // #pragma omp parallel for
-//        for (int o = 0 ; o < OC ; o++) {
+            }
+        });
         IntStream.range(0, OC).parallel().forEach( o -> {
             for (int b = 0 ; b < B ; b++) {
                 for (int t = 0 ; t < T ; t++) {
@@ -712,9 +691,9 @@ public class GPT2 {
         float scale = 1.0f / TornadoMath.sqrt(hs);
 
         // #pragma omp parallel for collapse(3)
-        for (int b = 0 ; b < B ; b++) {
-            for (int t = 0 ; t < T ; t++) {
-                for (int h = 0 ; h < NH ; h++) {
+        IntStream.range(0, B).parallel().forEach( b -> {
+            IntStream.range(0, T).parallel().forEach( t -> {
+                IntStream.range(0, NH).parallel().forEach( h -> {
                     int query_t = inp + b * T * C3 + t * C3 + h * hs;
                     int preatt_bth = preatt + b * NH * T * T + h * T * T + t * T;
                     int att_bth = att + b * NH * T * T + h * T * T + t * T;
@@ -768,9 +747,9 @@ public class GPT2 {
                             acts_memory.set(out_bth + i, acts_memory.get(out_bth + i) + att_btht2 * acts_memory.get(value_t2 + i));
                         }
                     }
-                }
-            }
-        }
+                });
+            });
+        });
     }
 
     // grads_acts, grads_acts, grads_acts, grads_acts, acts, acts
@@ -884,8 +863,8 @@ public class GPT2 {
         // Vp is the padded vocab size (for efficiency), V is the "real" vocab size
         // example: Vp is 50304 and V is 50257
         // #pragma omp parallel for collapse(2)
-        for (int b = 0 ; b < B ; b++) {
-            for (int t = 0 ; t < T ; t++) {
+        IntStream.range(0, B).parallel().forEach( b -> {
+            IntStream.range(0, T).parallel().forEach( t -> {
                 // probs <- softmax(logits)
                 int logits_bt = logits + b * T * Vp + t * Vp;
                 int probs_bt = probs + b * T * Vp + t * Vp;
@@ -911,8 +890,8 @@ public class GPT2 {
                 for (int i = V; i < Vp; i++) {
                     acts_memory.set(probs_bt + i, 0.0f);
                 }
-            }
-        }
+            });
+        });
     }
 
     // acts, acts
