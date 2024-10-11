@@ -1,5 +1,7 @@
 package com.otabuzzman.llmj;
 
+import uk.ac.manchester.tornado.api.types.arrays.IntArray;
+
 public class ParameterTensors {
     public final static int NUM_PARAMETER_TENSORS = 16;
 
@@ -22,10 +24,12 @@ public class ParameterTensors {
 
     public final int count;
 
+    private int C;
+
     // llm.c: fill_in_parameter_sizes(...)
     public ParameterTensors(GPT2Config config) {
         int Vp = config.padded_vocab_size;
-        int C = config.channels;
+        C = config.channels;
         int maxT = config.max_seq_len;
         int L = config.num_layers;
         wte = 0; // wte
@@ -46,5 +50,40 @@ public class ParameterTensors {
         lnfb = lnfw + C; // lnfb
 
         count = lnfb + C;
+    }
+
+    public static class Indices {
+        public static final int wte = 0;
+        public static final int wpe = 1;
+        public static final int ln1w = 2;
+        public static final int ln1b = 3;
+        public static final int qkvw = 4;
+        public static final int qkvb = 5;
+        public static final int attprojw = 6;
+        public static final int attprojb = 7;
+        public static final int ln2w = 8;
+        public static final int ln2b = 9;
+        public static final int fcw = 10;
+        public static final int fcb = 11;
+        public static final int fcprojw = 12;
+        public static final int fcprojb = 13;
+        public static final int lnfw = 14;
+        public static final int lnfb = 15;
+    }
+
+    public void copyForLayerAtIndex(int index, IntArray tensors) {
+        tensors.set(Indices.ln1w, ln1w + index * C);
+        tensors.set(Indices.ln1w, ln1w + index * C);
+        tensors.set(Indices.ln1b, ln1b + index * C);
+        tensors.set(Indices.qkvw, qkvw + index * 3 * C * C);
+        tensors.set(Indices.qkvb, qkvb + index * 3 * C);
+        tensors.set(Indices.attprojw, attprojw + index * C * C);
+        tensors.set(Indices.attprojb, attprojb + index * C);
+        tensors.set(Indices.ln2w, ln2w + index * C);
+        tensors.set(Indices.ln2b, ln2b + index * C);
+        tensors.set(Indices.fcw, fcw + index * 4 * C * C);
+        tensors.set(Indices.fcb, fcb + index * 4 * C);
+        tensors.set(Indices.fcprojw, fcprojw + index * C * 4 * C);
+        tensors.set(Indices.fcprojb, fcprojb + index * C);
     }
 }

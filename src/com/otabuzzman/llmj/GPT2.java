@@ -26,7 +26,6 @@ import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
 
 import uk.ac.manchester.tornado.api.annotations.Parallel;
-import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
@@ -998,6 +997,8 @@ public class GPT2 {
 
         int residual;
         // forward pass
+        IntArray p_lw = new IntArray(ParameterTensors.NUM_PARAMETER_TENSORS);
+        IntArray p_la = new IntArray(ActivationTensors.NUM_ACTIVATION_TENSORS);
         long t1 = System.currentTimeMillis();
         encoder_forward(acts.encoded, params.wte, params.wpe, B, T, C); // encoding goes into residual[0]
 
@@ -1005,36 +1006,38 @@ public class GPT2 {
             residual = l == 0 ? acts.encoded : acts.residual3 + (l - 1) * B * T * C;
 
             // get the pointers of the weights for this layer
-            int l_ln1w = params.ln1w + l * C;
-            int l_ln1b = params.ln1b + l * C;
-            int l_qkvw = params.qkvw + l * 3 * C * C;
-            int l_qkvb = params.qkvb + l * 3 * C;
-            int l_attprojw = params.attprojw + l * C * C;
-            int l_attprojb = params.attprojb + l * C;
-            int l_ln2w = params.ln2w + l * C;
-            int l_ln2b = params.ln2b + l * C;
-            int l_fcw = params.fcw + l * 4 * C * C;
-            int l_fcb = params.fcb + l * 4 * C;
-            int l_fcprojw = params.fcprojw + l * C * 4 * C;
-            int l_fcprojb = params.fcprojb + l * C;
+            params.copyForLayerAtIndex(l, p_lw);
+            int l_ln1w = p_lw.get(ParameterTensors.Indices.ln1w);
+            int l_ln1b = p_lw.get(ParameterTensors.Indices.ln1b);
+            int l_qkvw = p_lw.get(ParameterTensors.Indices.qkvw);
+            int l_qkvb = p_lw.get(ParameterTensors.Indices.qkvb);
+            int l_attprojw = p_lw.get(ParameterTensors.Indices.attprojw);
+            int l_attprojb = p_lw.get(ParameterTensors.Indices.attprojb);
+            int l_ln2w = p_lw.get(ParameterTensors.Indices.ln2w);
+            int l_ln2b = p_lw.get(ParameterTensors.Indices.ln2b);
+            int l_fcw = p_lw.get(ParameterTensors.Indices.fcw);
+            int l_fcb = p_lw.get(ParameterTensors.Indices.fcb);
+            int l_fcprojw = p_lw.get(ParameterTensors.Indices.fcprojw);
+            int l_fcprojb = p_lw.get(ParameterTensors.Indices.fcprojb);
 
             // get the pointers of the activations for this layer
-            int l_ln1 = acts.ln1 + l * B * T * C;
-            int l_ln1_mean = acts.ln1_mean + l * B * T;
-            int l_ln1_rstd = acts.ln1_rstd + l * B * T;
-            int l_qkv = acts.qkv + l * B * T * 3 * C;
-            int l_atty = acts.atty + l * B * T * C;
-            int l_preatt = acts.preatt + l * B * NH * T * T;
-            int l_att = acts.att + l * B * NH * T * T;
-            int l_attproj = acts.attproj + l * B * T * C;
-            int l_residual2 = acts.residual2 + l * B * T * C;
-            int l_ln2 = acts.ln2 + l * B * T * C;
-            int l_ln2_mean = acts.ln2_mean + l * B * T;
-            int l_ln2_rstd = acts.ln2_rstd + l * B * T;
-            int l_fch = acts.fch + l * B * T * 4 * C;
-            int l_fch_gelu = acts.fch_gelu + l * B * T * 4 * C;
-            int l_fcproj = acts.fcproj + l * B * T * C;
-            int l_residual3 = acts.residual3 + l * B * T * C;
+            acts.copyForLayerAtIndex(l, p_la);
+            int l_ln1 = p_la.get(ActivationTensors.Indices.ln1);
+            int l_ln1_mean = p_la.get(ActivationTensors.Indices.ln1_mean);
+            int l_ln1_rstd = p_la.get(ActivationTensors.Indices.ln1_rstd);
+            int l_qkv = p_la.get(ActivationTensors.Indices.qkv);
+            int l_atty = p_la.get(ActivationTensors.Indices.atty);
+            int l_preatt = p_la.get(ActivationTensors.Indices.preatt);
+            int l_att = p_la.get(ActivationTensors.Indices.att);
+            int l_attproj = p_la.get(ActivationTensors.Indices.attproj);
+            int l_residual2 = p_la.get(ActivationTensors.Indices.residual2);
+            int l_ln2 = p_la.get(ActivationTensors.Indices.ln2);
+            int l_ln2_mean = p_la.get(ActivationTensors.Indices.ln2_mean);
+            int l_ln2_rstd = p_la.get(ActivationTensors.Indices.ln2_rstd);
+            int l_fch = p_la.get(ActivationTensors.Indices.fch);
+            int l_fch_gelu = p_la.get(ActivationTensors.Indices.fch_gelu);
+            int l_fcproj = p_la.get(ActivationTensors.Indices.fcproj);
+            int l_residual3 = p_la.get(ActivationTensors.Indices.residual3);
 
             // now do the forward pass
             layernorm_forward(l_ln1, l_ln1_mean, l_ln1_rstd, residual, l_ln1w, l_ln1b, B, T, C);
@@ -1102,6 +1105,11 @@ public class GPT2 {
             grads_acts_memory = FloatArray.fromArray(new float[acts.count]);
         }
 
+        IntArray p_lw = new IntArray(ParameterTensors.NUM_PARAMETER_TENSORS);
+        IntArray p_la = new IntArray(ActivationTensors.NUM_ACTIVATION_TENSORS);
+        IntArray p_dlw = new IntArray(ParameterTensors.NUM_PARAMETER_TENSORS);
+        IntArray p_dla = new IntArray(ActivationTensors.NUM_ACTIVATION_TENSORS);
+
         // we kick off the chain rule by filling in dlosses with 1.0f/(B*T)
         // technically this is a small, inline backward() pass of calculating
         // total, final loss as the mean over all losses over all (B,T) positions in the batch
@@ -1122,51 +1130,55 @@ public class GPT2 {
             dresidual = l == 0 ? grads_acts.encoded : grads_acts.residual3 + (l - 1) * B * T * C;
 
             // get the pointers of the weights for this layer
-            int l_ln1w = params.ln1w + l * C;
-            int l_qkvw = params.qkvw + l * 3 * C * C;
-            int l_attprojw = params.attprojw + l * C * C;
-            int l_ln2w = params.ln2w + l * C;
-            int l_fcw = params.fcw + l * 4 * C * C;
-            int l_fcprojw = params.fcprojw + l * C * 4 * C;
+            params.copyForLayerAtIndex(l, p_lw);
+            int l_ln1w = p_lw.get(ParameterTensors.Indices.ln1w);
+            int l_qkvw = p_lw.get(ParameterTensors.Indices.qkvw);
+            int l_attprojw = p_lw.get(ParameterTensors.Indices.attprojw);
+            int l_ln2w = p_lw.get(ParameterTensors.Indices.ln2w);
+            int l_fcw = p_lw.get(ParameterTensors.Indices.fcw);
+            int l_fcprojw = p_lw.get(ParameterTensors.Indices.fcprojw);
             // get the pointers of the gradients of the weights for this layer
-            int dl_ln1w = grads.ln1w + l * C;
-            int dl_ln1b = grads.ln1b + l * C;
-            int dl_qkvw = grads.qkvw + l * 3 * C * C;
-            int dl_qkvb = grads.qkvb + l * 3 * C;
-            int dl_attprojw = grads.attprojw + l * C * C;
-            int dl_attprojb = grads.attprojb + l * C;
-            int dl_ln2w = grads.ln2w + l * C;
-            int dl_ln2b = grads.ln2b + l * C;
-            int dl_fcw = grads.fcw + l * 4 * C * C;
-            int dl_fcb = grads.fcb + l * 4 * C;
-            int dl_fcprojw = grads.fcprojw + l * C * 4 * C;
-            int dl_fcprojb = grads.fcprojb + l * C;
+            params.copyForLayerAtIndex(l, p_dlw);
+            int dl_ln1w = p_dlw.get(ParameterTensors.Indices.ln1w);
+            int dl_ln1b = p_dlw.get(ParameterTensors.Indices.ln1b);
+            int dl_qkvw = p_dlw.get(ParameterTensors.Indices.qkvw);
+            int dl_qkvb = p_dlw.get(ParameterTensors.Indices.qkvb);
+            int dl_attprojw = p_dlw.get(ParameterTensors.Indices.attprojw);
+            int dl_attprojb = p_dlw.get(ParameterTensors.Indices.attprojb);
+            int dl_ln2w = p_dlw.get(ParameterTensors.Indices.ln2w);
+            int dl_ln2b = p_dlw.get(ParameterTensors.Indices.ln2b);
+            int dl_fcw = p_dlw.get(ParameterTensors.Indices.fcw);
+            int dl_fcb = p_dlw.get(ParameterTensors.Indices.fcb);
+            int dl_fcprojw = p_dlw.get(ParameterTensors.Indices.fcprojw);
+            int dl_fcprojb = p_dlw.get(ParameterTensors.Indices.fcprojb);
             // get the pointers of the activations for this layer
-            int l_ln1 = acts.ln1 + l * B * T * C;
-            int l_ln1_mean = acts.ln1_mean + l * B * T;
-            int l_ln1_rstd = acts.ln1_rstd + l * B * T;
-            int l_qkv = acts.qkv + l * B * T * 3 * C;
-            int l_atty = acts.atty + l * B * T * C;
-            int l_att = acts.att + l * B * NH * T * T;
-            int l_residual2 = acts.residual2 + l * B * T * C;
-            int l_ln2 = acts.ln2 + l * B * T * C;
-            int l_ln2_mean = acts.ln2_mean + l * B * T;
-            int l_ln2_rstd = acts.ln2_rstd + l * B * T;
-            int l_fch = acts.fch + l * B * T * 4 * C;
-            int l_fch_gelu = acts.fch_gelu + l * B * T * 4 * C;
+            acts.copyForLayerAtIndex(l, p_la);
+            int l_ln1 = p_la.get(ActivationTensors.Indices.ln1);
+            int l_ln1_mean = p_la.get(ActivationTensors.Indices.ln1_mean);
+            int l_ln1_rstd = p_la.get(ActivationTensors.Indices.ln1_rstd);
+            int l_qkv = p_la.get(ActivationTensors.Indices.qkv);
+            int l_atty = p_la.get(ActivationTensors.Indices.atty);
+            int l_att = p_la.get(ActivationTensors.Indices.att);
+            int l_residual2 = p_la.get(ActivationTensors.Indices.residual2);
+            int l_ln2 = p_la.get(ActivationTensors.Indices.ln2);
+            int l_ln2_mean = p_la.get(ActivationTensors.Indices.ln2_mean);
+            int l_ln2_rstd = p_la.get(ActivationTensors.Indices.ln2_rstd);
+            int l_fch = p_la.get(ActivationTensors.Indices.fch);
+            int l_fch_gelu = p_la.get(ActivationTensors.Indices.fch_gelu);
             // get the pointers of the gradients of the activations for this layer
-            int dl_ln1 = grads_acts.ln1 + l * B * T * C;
-            int dl_qkv = grads_acts.qkv + l * B * T * 3 * C;
-            int dl_atty = grads_acts.atty + l * B * T * C;
-            int dl_preatt = grads_acts.preatt + l * B * NH * T * T;
-            int dl_att = grads_acts.att + l * B * NH * T * T;
-            int dl_attproj = grads_acts.attproj + l * B * T * C;
-            int dl_residual2 = grads_acts.residual2 + l * B * T * C;
-            int dl_ln2 = grads_acts.ln2 + l * B * T * C;
-            int dl_fch = grads_acts.fch + l * B * T * 4 * C;
-            int dl_fch_gelu = grads_acts.fch_gelu + l * B * T * 4 * C;
-            int dl_fcproj = grads_acts.fcproj + l * B * T * C;
-            int dl_residual3 = grads_acts.residual3 + l * B * T * C;
+            acts.copyForLayerAtIndex(l, p_dla);
+            int dl_ln1 = p_dla.get(ActivationTensors.Indices.ln1);
+            int dl_qkv = p_dla.get(ActivationTensors.Indices.qkv);
+            int dl_atty = p_dla.get(ActivationTensors.Indices.atty);
+            int dl_preatt = p_dla.get(ActivationTensors.Indices.preatt);
+            int dl_att = p_dla.get(ActivationTensors.Indices.att);
+            int dl_attproj = p_dla.get(ActivationTensors.Indices.attproj);
+            int dl_residual2 = p_dla.get(ActivationTensors.Indices.residual2);
+            int dl_ln2 = p_dla.get(ActivationTensors.Indices.ln2);
+            int dl_fch = p_dla.get(ActivationTensors.Indices.fch);
+            int dl_fch_gelu = p_dla.get(ActivationTensors.Indices.fch_gelu);
+            int dl_fcproj = p_dla.get(ActivationTensors.Indices.fcproj);
+            int dl_residual3 = p_dla.get(ActivationTensors.Indices.residual3);
 
             // backprop this layer
             residual_backward(dl_residual2, dl_fcproj, dl_residual3, B * T * C);
