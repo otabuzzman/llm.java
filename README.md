@@ -1,13 +1,24 @@
 # llm.java
-A Java port of Andrej Karpathy‘s llm.c.
+A Java port of Andrej Karpathy‘s llm.c that uses TornadoVM for parallelization on accelarators.
 
-## Quick start
+## Quick start (Windows)
 - Clone [llm.c](https://github.com/karpathy/llm.c) and follow instructions given there in README, section [quick start (CPU)](https://github.com/otabuzzman/llm.c/blob/2346cdac931f544d63ce816f7e3f5479a917eef5/README.md#quick-start-cpu). This will get you the dataset, the tokens, the small GPT-2 model (124M) released by OpenAI, and two executables for testing and training.
 
-- Clone this repository, open in VS Code, build and run the executables for testing and training.
+- Clone this repository, open in VS Code, adjust path to TornadoVM's JARs in `launch.json`, and build the executables for testing and training.
+
+- Copy `*.bin` files from `llm.c` into this directory and run the test class in a terminal window.
+
+```
+# assuming `llm.c´ is a sibling folder of `llm.java´ (CWD)
+copy ..\llm.c\*.bin .
+
+# assuming TornadoVM build in sibling folder took
+..\TornadoVM\setvars.cmd
+
+python %TORNADO_SDK%\bin\tornado --jvm="-Ds0.device=0:0" --classpath bin com.otabuzzman.llmj.TestGpt2
+```
 
 ## Output samples
-
 Output of Java's `TrainGpt2`:
 ```
 PS C:\Users\iuerg\lab\llm.java>  & 'C:\Program Files\Java\graalvm-jdk-21.0.1+12.1\bin\java.exe' '-XX:+ShowCodeDetailsInExceptionMessages' '-cp' 'C:\Users\iuerg\lab\llm.java\bin' 'com.otabuzzman.llmj.TrainGpt2'
