@@ -27,8 +27,10 @@ import jdk.incubator.vector.VectorSpecies;
 import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
+import uk.ac.manchester.tornado.api.TornadoExecutionResult;
 import uk.ac.manchester.tornado.api.annotations.Parallel;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
+import uk.ac.manchester.tornado.api.exceptions.TornadoExecutionPlanException;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
@@ -228,7 +230,7 @@ public class GPT2 {
         }
     }
 
-    private static void attention_forward_2nd(FloatArray acts, IntArray pointers, FloatArray handover, int preatt, int att, int B, int T, int C, int NH) {
+    private static void attention_forward_2nd(FloatArray acts, IntArray pointers, FloatArray maxval, int preatt, int att, int B, int T, int C, int NH) {
         // input is (B, T, 3C) holding the query, key, value (Q, K, V) vectors
         // preatt, att are (B, NH, T, T). NH = number of heads, T = sequence length
         // that holds the pre-attention and post-attention scores (used in backward)
@@ -247,10 +249,10 @@ public class GPT2 {
 
                     // pass 2: calculate the exp and keep track of sum
                     // maxval is being calculated and subtracted only for numerical stability
-                    float maxval = handover.get(current_bth);
+                    float _maxval = maxval.get(current_bth);
                     float expsum = 0.0f;
                     for (int t2 = 0; t2 <= t; t2++) {
-                        float expv = TornadoMath.exp(acts.get(preatt_bth + t2) - maxval);
+                        float expv = TornadoMath.exp(acts.get(preatt_bth + t2) - _maxval);
                         expsum += expv;
                         acts.set(att_bth + t2, expv);
                     }
@@ -261,13 +263,13 @@ public class GPT2 {
                     // }
                     // ERROR : clBuildProgram -> Returned: -11
                     // float expsum_inv = (expsum == 0.0f) ? 0.0f : 1.0f / expsum;
-                    handover.set(current_bth, expsum); // expsum_inv calculation moved to next task
+                    maxval.set(current_bth, expsum); // expsum_inv calculation moved to next task
                 }
             }
         }
     }
 
-    private static void attention_forward_3rd(FloatArray acts, IntArray pointers, FloatArray handover, int out, int att, int inp, int B, int T, int C, int NH) {
+    private static void attention_forward_3rd(FloatArray acts, IntArray pointers, FloatArray expsum, int out, int att, int inp, int B, int T, int C, int NH) {
         // input is (B, T, 3C) holding the query, key, value (Q, K, V) vectors
         // preatt, att are (B, NH, T, T). NH = number of heads, T = sequence length
         // that holds the pre-attention and post-attention scores (used in backward)
@@ -286,9 +288,9 @@ public class GPT2 {
                     int current_bth = b * T * NH + t * NH + h;
 
                     float expsum_inv = 0.0f;
-                    float expsum = handover.get(current_bth);
-                    if (expsum > 0.0f || 0.0f > expsum) {
-                        expsum_inv = 1.0f / expsum;
+                    float _expsum = expsum.get(current_bth);
+                    if (_expsum > 0.0f || 0.0f > _expsum) {
+                        expsum_inv = 1.0f / _expsum;
                     }
 
                     // pass 3: normalize to get the softmax
@@ -924,147 +926,104 @@ public class GPT2 {
             for (int i = 0 ; i < targets.capacity() ; i++) this.targets.set(i, targets.get(i));
         }
 
-        int residual;
-
         IntArray pointers = new IntArray(32); // weights and activations pointers buffer
-        int _residual = 0;
+        int residual = 0;
         // weights indices
-        int _l_ln1w = 1;
-        int _l_ln1b = 2;
-        int _l_qkvw = 3;
-        int _l_qkvb = 4;
-        int _l_attprojw = 5;
-        int _l_attprojb = 6;
-        int _l_ln2w = 7;
-        int _l_ln2b = 8;
-        int _l_fcw = 9;
-        int _l_fcb = 10;
-        int _l_fcprojw = 11;
-        int _l_fcprojb = 12;
+        int l_ln1w = 1;
+        int l_ln1b = 2;
+        int l_qkvw = 3;
+        int l_qkvb = 4;
+        int l_attprojw = 5;
+        int l_attprojb = 6;
+        int l_ln2w = 7;
+        int l_ln2b = 8;
+        int l_fcw = 9;
+        int l_fcb = 10;
+        int l_fcprojw = 11;
+        int l_fcprojb = 12;
         // weights indices
-        int _l_ln1 = 13;
-        int _l_ln1_mean = 14;
-        int _l_ln1_rstd = 15;
-        int _l_qkv = 16;
-        int _l_atty = 17;
-        int _l_preatt = 18;
-        int _l_att = 19;
-        int _l_attproj = 20;
-        int _l_residual2 = 21;
-        int _l_ln2 = 22;
-        int _l_ln2_mean = 23;
-        int _l_ln2_rstd = 24;
-        int _l_fch = 25;
-        int _l_fch_gelu = 26;
-        int _l_fcproj = 27;
-        int _l_residual3 = 28;
+        int l_ln1 = 13;
+        int l_ln1_mean = 14;
+        int l_ln1_rstd = 15;
+        int l_qkv = 16;
+        int l_atty = 17;
+        int l_preatt = 18;
+        int l_att = 19;
+        int l_attproj = 20;
+        int l_residual2 = 21;
+        int l_ln2 = 22;
+        int l_ln2_mean = 23;
+        int l_ln2_rstd = 24;
+        int l_fch = 25;
+        int l_fch_gelu = 26;
+        int l_fcproj = 27;
+        int l_residual3 = 28;
 
         FloatArray handover = new FloatArray(B * T * NH);
 
-        TaskGraph attention_graph = new TaskGraph("s0")
+        TaskGraph transformer_block = new TaskGraph("s0")
         .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory)
-        .transferToDevice(DataTransferMode.EVERY_EXECUTION, acts_memory, pointers)
-        .task("t0", GPT2::layernorm_forward, params_memory, acts_memory, pointers, _l_ln1, _l_ln1_mean, _l_ln1_rstd, _residual, _l_ln1w, _l_ln1b, B, T, C)
-        .task("t1", GPT2::matmul_forward, params_memory, acts_memory, pointers, _l_qkv, _l_ln1, _l_qkvw, _l_qkvb, B, T, C, 3 * C)
-        .task("t2", GPT2::attention_forward_1st, acts_memory, pointers, handover, _l_preatt, _l_qkv, B, T, C, NH)
-        .task("t3", GPT2::attention_forward_2nd, acts_memory, pointers, handover, _l_preatt, _l_att, B, T, C, NH)
-        .task("t4", GPT2::attention_forward_3rd, acts_memory, pointers, handover, _l_atty, _l_att, _l_qkv, B, T, C, NH)
-        //.task("t5", GPT2::matmul_forward, params_memory, acts_memory, pointers, _l_attproj, _l_atty, _l_attprojw, _l_attprojb, B, T, C, C)
-        //.task("t6", GPT2::residual_forward, acts_memory, pointers, _l_residual2, _residual, _l_attproj, B * T * C)
-        //.task("t7", GPT2::layernorm_forward, params_memory, acts_memory, pointers, _l_ln2, _l_ln2_mean, _l_ln2_rstd, _l_residual2, _l_ln2w, _l_ln2b, B, T, C)
-        //.task("t8", GPT2::matmul_forward, params_memory, acts_memory, pointers, _l_fch, _l_ln2, _l_fcw, _l_fcb, B, T, C, 4 * C)
-        //.task("t9", GPT2::gelu_forward, acts_memory, pointers, _l_fch_gelu, _l_fch, B * T * 4 * C)
-        //.task("t10", GPT2::matmul_forward, params_memory, acts_memory, pointers, _l_fcproj, _l_fch_gelu, _l_fcprojw, _l_fcprojb, B, T, 4 * C, C)
-        //.task("t11", GPT2::residual_forward, acts_memory, pointers, _l_residual3, _l_residual2, _l_fcproj, B * T * C)
-        .transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory);
-        ImmutableTaskGraph attention_block = attention_graph.snapshot();
-        TornadoExecutionPlan execution_plan = new TornadoExecutionPlan(attention_block);
+        .transferToDevice(DataTransferMode.EVERY_EXECUTION, pointers)
+        .task("t0", GPT2::layernorm_forward, params_memory, acts_memory, pointers, l_ln1, l_ln1_mean, l_ln1_rstd, residual, l_ln1w, l_ln1b, B, T, C)
+        .task("t1", GPT2::matmul_forward, params_memory, acts_memory, pointers, l_qkv, l_ln1, l_qkvw, l_qkvb, B, T, C, 3 * C)
+        .task("t2", GPT2::attention_forward_1st, acts_memory, pointers, handover, l_preatt, l_qkv, B, T, C, NH)
+        .task("t3", GPT2::attention_forward_2nd, acts_memory, pointers, handover, l_preatt, l_att, B, T, C, NH)
+        .task("t4", GPT2::attention_forward_3rd, acts_memory, pointers, handover, l_atty, l_att, l_qkv, B, T, C, NH)
+        .task("t5", GPT2::matmul_forward, params_memory, acts_memory, pointers, l_attproj, l_atty, l_attprojw, l_attprojb, B, T, C, C)
+        .task("t6", GPT2::residual_forward, acts_memory, pointers, l_residual2, residual, l_attproj, B * T * C)
+        .task("t7", GPT2::layernorm_forward, params_memory, acts_memory, pointers, l_ln2, l_ln2_mean, l_ln2_rstd, l_residual2, l_ln2w, l_ln2b, B, T, C)
+        .task("t8", GPT2::matmul_forward, params_memory, acts_memory, pointers, l_fch, l_ln2, l_fcw, l_fcb, B, T, C, 4 * C)
+        .task("t9", GPT2::gelu_forward, acts_memory, pointers, l_fch_gelu, l_fch, B * T * 4 * C)
+        .task("t10", GPT2::matmul_forward, params_memory, acts_memory, pointers, l_fcproj, l_fch_gelu, l_fcprojw, l_fcprojb, B, T, 4 * C, C)
+        .task("t11", GPT2::residual_forward, acts_memory, pointers, l_residual3, l_residual2, l_fcproj, B * T * C)
+        .transferToHost(DataTransferMode.UNDER_DEMAND, acts_memory);
+        TornadoExecutionPlan transformer_runner = new TornadoExecutionPlan(transformer_block.snapshot());
+        TornadoExecutionResult transformer_result = null;
 
         // forward pass
         long t1 = System.currentTimeMillis();
         encoder_forward(acts.encoded, params.wte, params.wpe, B, T, C); // encoding goes into residual[0]
         for (int l = 0 ; l < L ; l++) {
-            pointers.set(_residual, l == 0 ? acts.encoded : acts.residual3 + (l - 1) * B * T * C);
+            pointers.set(residual, l == 0 ? acts.encoded : acts.residual3 + (l - 1) * B * T * C);
 
             // get the pointers of the weights for this layer
-            pointers.set(_l_ln1w, params.ln1w + l * C);
-            pointers.set(_l_ln1b, params.ln1b + l * C);
-            pointers.set(_l_qkvw, params.qkvw + l * 3 * C * C);
-            pointers.set(_l_qkvb, params.qkvb + l * 3 * C);
-            pointers.set(_l_attprojw, params.attprojw + l * C * C);
-            pointers.set(_l_attprojb, params.attprojb + l * C);
-            pointers.set(_l_ln2w, params.ln2w + l * C);
-            pointers.set(_l_ln2b, params.ln2b + l * C);
-            pointers.set(_l_fcw, params.fcw + l * 4 * C * C);
-            pointers.set(_l_fcb, params.fcb + l * 4 * C);
-            pointers.set(_l_fcprojw, params.fcprojw + l * C * 4 * C);
-            pointers.set(_l_fcprojb, params.fcprojb + l * C);
+            pointers.set(l_ln1w, params.ln1w + l * C);
+            pointers.set(l_ln1b, params.ln1b + l * C);
+            pointers.set(l_qkvw, params.qkvw + l * 3 * C * C);
+            pointers.set(l_qkvb, params.qkvb + l * 3 * C);
+            pointers.set(l_attprojw, params.attprojw + l * C * C);
+            pointers.set(l_attprojb, params.attprojb + l * C);
+            pointers.set(l_ln2w, params.ln2w + l * C);
+            pointers.set(l_ln2b, params.ln2b + l * C);
+            pointers.set(l_fcw, params.fcw + l * 4 * C * C);
+            pointers.set(l_fcb, params.fcb + l * 4 * C);
+            pointers.set(l_fcprojw, params.fcprojw + l * C * 4 * C);
+            pointers.set(l_fcprojb, params.fcprojb + l * C);
 
             // get the pointers of the activations for this layer
-            pointers.set(_l_ln1, acts.ln1 + l * B * T * C);
-            pointers.set(_l_ln1_mean, acts.ln1_mean + l * B * T);
-            pointers.set(_l_ln1_rstd, acts.ln1_rstd + l * B * T);
-            pointers.set(_l_qkv, acts.qkv + l * B * T * 3 * C);
-            pointers.set(_l_atty, acts.atty + l * B * T * C);
-            pointers.set(_l_preatt, acts.preatt + l * B * NH * T * T);
-            pointers.set(_l_att, acts.att + l * B * NH * T * T);
-            pointers.set(_l_attproj, acts.attproj + l * B * T * C);
-            pointers.set(_l_residual2, acts.residual2 + l * B * T * C);
-            pointers.set(_l_ln2, acts.ln2 + l * B * T * C);
-            pointers.set(_l_ln2_mean, acts.ln2_mean + l * B * T);
-            pointers.set(_l_ln2_rstd, acts.ln2_rstd + l * B * T);
-            pointers.set(_l_fch, acts.fch + l * B * T * 4 * C);
-            pointers.set(_l_fch_gelu, acts.fch_gelu + l * B * T * 4 * C);
-            pointers.set(_l_fcproj, acts.fcproj + l * B * T * C);
-            pointers.set(_l_residual3, acts.residual3 + l * B * T * C);
-
-            residual = l == 0 ? acts.encoded : acts.residual3 + (l - 1) * B * T * C;
-
-            // get the pointers of the weights for this layer
-            int l_ln1w = params.ln1w + l * C;
-            int l_ln1b = params.ln1b + l * C;
-            int l_qkvw = params.qkvw + l * 3 * C * C;
-            int l_qkvb = params.qkvb + l * 3 * C;
-            int l_attprojw = params.attprojw + l * C * C;
-            int l_attprojb = params.attprojb + l * C;
-            int l_ln2w = params.ln2w + l * C;
-            int l_ln2b = params.ln2b + l * C;
-            int l_fcw = params.fcw + l * 4 * C * C;
-            int l_fcb = params.fcb + l * 4 * C;
-            int l_fcprojw = params.fcprojw + l * C * 4 * C;
-            int l_fcprojb = params.fcprojb + l * C;
-
-            // get the pointers of the activations for this layer
-            int l_ln1 = acts.ln1 + l * B * T * C;
-            int l_ln1_mean = acts.ln1_mean + l * B * T;
-            int l_ln1_rstd = acts.ln1_rstd + l * B * T;
-            int l_qkv = acts.qkv + l * B * T * 3 * C;
-            int l_atty = acts.atty + l * B * T * C;
-            int l_preatt = acts.preatt + l * B * NH * T * T;
-            int l_att = acts.att + l * B * NH * T * T;
-            int l_attproj = acts.attproj + l * B * T * C;
-            int l_residual2 = acts.residual2 + l * B * T * C;
-            int l_ln2 = acts.ln2 + l * B * T * C;
-            int l_ln2_mean = acts.ln2_mean + l * B * T;
-            int l_ln2_rstd = acts.ln2_rstd + l * B * T;
-            int l_fch = acts.fch + l * B * T * 4 * C;
-            int l_fch_gelu = acts.fch_gelu + l * B * T * 4 * C;
-            int l_fcproj = acts.fcproj + l * B * T * C;
-            int l_residual3 = acts.residual3 + l * B * T * C;
+            pointers.set(l_ln1, acts.ln1 + l * B * T * C);
+            pointers.set(l_ln1_mean, acts.ln1_mean + l * B * T);
+            pointers.set(l_ln1_rstd, acts.ln1_rstd + l * B * T);
+            pointers.set(l_qkv, acts.qkv + l * B * T * 3 * C);
+            pointers.set(l_atty, acts.atty + l * B * T * C);
+            pointers.set(l_preatt, acts.preatt + l * B * NH * T * T);
+            pointers.set(l_att, acts.att + l * B * NH * T * T);
+            pointers.set(l_attproj, acts.attproj + l * B * T * C);
+            pointers.set(l_residual2, acts.residual2 + l * B * T * C);
+            pointers.set(l_ln2, acts.ln2 + l * B * T * C);
+            pointers.set(l_ln2_mean, acts.ln2_mean + l * B * T);
+            pointers.set(l_ln2_rstd, acts.ln2_rstd + l * B * T);
+            pointers.set(l_fch, acts.fch + l * B * T * 4 * C);
+            pointers.set(l_fch_gelu, acts.fch_gelu + l * B * T * 4 * C);
+            pointers.set(l_fcproj, acts.fcproj + l * B * T * C);
+            pointers.set(l_residual3, acts.residual3 + l * B * T * C);
 
             // now do the forward pass
-            execution_plan.execute();
-            //layernorm_forward(l_ln1, l_ln1_mean, l_ln1_rstd, residual, l_ln1w, l_ln1b, B, T, C);
-            //matmulForward.apply(l_qkv, l_ln1, l_qkvw, l_qkvb, B, T, C, 3 * C);
-            //attention_forward(l_atty, l_preatt, l_att, l_qkv, B, T, C, NH);
-            matmulForward.apply(l_attproj, l_atty, l_attprojw, l_attprojb, B, T, C, C);
-            residual_forward(l_residual2, residual, l_attproj, B * T * C);
-            layernorm_forward(l_ln2, l_ln2_mean, l_ln2_rstd, l_residual2, l_ln2w, l_ln2b, B, T, C);
-            matmulForward.apply(l_fch, l_ln2, l_fcw, l_fcb, B, T, C, 4 * C);
-            gelu_forward(l_fch_gelu, l_fch, B * T * 4 * C);
-            matmulForward.apply(l_fcproj, l_fch_gelu, l_fcprojw, l_fcprojb, B, T, 4 * C, C);
-            residual_forward(l_residual3, l_residual2, l_fcproj, B * T * C);
+            transformer_result = transformer_runner.execute();
         }
+        transformer_result.transferToHost(acts_memory);
+        try { transformer_runner.close(); } catch (TornadoExecutionPlanException e) { throw new UnexpectedException(null); }
+
         residual = acts.residual3 + (L - 1) * B * T * C; // last residual is in residual3
         layernorm_forward(acts.lnf, acts.lnf_mean, acts.lnf_rstd, residual, params.lnfw, params.lnfb, B, T, C);
         long t0 = System.currentTimeMillis();
