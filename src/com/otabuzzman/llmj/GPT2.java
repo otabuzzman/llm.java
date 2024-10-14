@@ -24,7 +24,6 @@ import java.util.stream.IntStream;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
-import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
 import uk.ac.manchester.tornado.api.TornadoExecutionResult;
@@ -331,6 +330,43 @@ public class GPT2 {
     private static void residual_forward(FloatArray acts, IntArray pointers, int out, int inp1, int inp2, int N) {
         for (@Parallel int i = 0 ; i < N ; i++) {
             acts.set(pointers.get(out) + i, acts.get(pointers.get(inp1) + i) + acts.get(pointers.get(inp2) + i));
+        }
+    }
+
+    public static void softmax_forward(FloatArray acts, IntArray pointers, int probs, int logits, int B, int T, int V, int Vp) {
+        // output: probs are (B,T,Vp) of the probabilities (sums to 1.0 in each b,t position)
+        // input: logits is (B,T,Vp) of the unnormalized log probabilities
+        // Vp is the padded vocab size (for efficiency), V is the "real" vocab size
+        // example: Vp is 50304 and V is 50257
+        // #pragma omp parallel for collapse(2)
+        for (@Parallel int b = 0 ; b < B ; b++) {
+            for (@Parallel int t = 0 ; t < T ; t++) {
+                // probs <- softmax(logits)
+                int logits_bt = pointers.get(logits) + b * T * Vp + t * Vp;
+                int probs_bt = pointers.get(probs) + b * T * Vp + t * Vp;
+
+                // maxval is only calculated and subtracted for numerical stability
+                float maxval = -10000.0f; // TODO something better
+                for (int i = 0 ; i < V ; i++) {
+                    if (acts.get(logits_bt + i) > maxval) {
+                        maxval = acts.get(logits_bt + i);
+                    }
+                }
+                float sum = 0.0f;
+                for (int i = 0 ; i < V ; i++) {
+                    acts.set(probs_bt + i, TornadoMath.exp(acts.get(logits_bt + i) - maxval));
+                    sum += acts.get(probs_bt + i);
+                }
+                // note we only loop to V, leaving the padded dimensions
+                for (int i = 0 ; i < V ; i++) {
+                    acts.set(probs_bt + i, acts.get(probs_bt + i) / sum);
+                }
+                // for extra super safety we may wish to include this too,
+                // forcing the probabilities here to be zero, but it shouldn't matter
+                for (int i = V; i < Vp; i++) {
+                    acts.set(probs_bt + i, 0.0f);
+                }
+            }
         }
     }
 
@@ -926,40 +962,49 @@ public class GPT2 {
             for (int i = 0 ; i < targets.capacity() ; i++) this.targets.set(i, targets.get(i));
         }
 
-        IntArray pointers = new IntArray(32); // weights and activations pointers buffer
+        IntArray pointers = new IntArray(40); // weights and activations pointers buffer
         int residual = 0;
         // weights indices
-        int l_ln1w = 1;
-        int l_ln1b = 2;
-        int l_qkvw = 3;
-        int l_qkvb = 4;
-        int l_attprojw = 5;
-        int l_attprojb = 6;
-        int l_ln2w = 7;
-        int l_ln2b = 8;
-        int l_fcw = 9;
-        int l_fcb = 10;
-        int l_fcprojw = 11;
-        int l_fcprojb = 12;
+        int o_wte = 1;
+        int l_ln1w = 2;
+        int l_ln1b = 3;
+        int l_qkvw = 4;
+        int l_qkvb = 5;
+        int l_attprojw = 6;
+        int l_attprojb = 7;
+        int l_ln2w = 8;
+        int l_ln2b = 9;
+        int l_fcw = 10;
+        int l_fcb = 11;
+        int l_fcprojw = 12;
+        int l_fcprojb = 13;
+        int o_lnfw = 14;
+        int o_lnfb = 15;
         // weights indices
-        int l_ln1 = 13;
-        int l_ln1_mean = 14;
-        int l_ln1_rstd = 15;
-        int l_qkv = 16;
-        int l_atty = 17;
-        int l_preatt = 18;
-        int l_att = 19;
-        int l_attproj = 20;
-        int l_residual2 = 21;
-        int l_ln2 = 22;
-        int l_ln2_mean = 23;
-        int l_ln2_rstd = 24;
-        int l_fch = 25;
-        int l_fch_gelu = 26;
-        int l_fcproj = 27;
-        int l_residual3 = 28;
+        int l_ln1 = 16;
+        int l_ln1_mean = 17;
+        int l_ln1_rstd = 18;
+        int l_qkv = 19;
+        int l_atty = 20;
+        int l_preatt = 21;
+        int l_att = 22;
+        int l_attproj = 23;
+        int l_residual2 = 24;
+        int l_ln2 = 25;
+        int l_ln2_mean = 26;
+        int l_ln2_rstd = 27;
+        int l_fch = 28;
+        int l_fch_gelu = 29;
+        int l_fcproj = 30;
+        int l_residual3 = 31;
+        int o_lnf = 32;
+        int o_lnf_mean = 33;
+        int o_lnf_rstd = 34;
+        int o_logits = 35;
+        int o_probs = 36;
+        int o_losses = 37;
 
-        FloatArray handover = new FloatArray(B * T * NH);
+        FloatArray handover = new FloatArray(B * T * NH); // to forward data in attention layers
 
         TaskGraph transformer_block = new TaskGraph("s0")
         .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory)
@@ -1024,12 +1069,27 @@ public class GPT2 {
         transformer_result.transferToHost(acts_memory);
         try { transformer_runner.close(); } catch (TornadoExecutionPlanException e) { throw new UnexpectedException(null); }
 
-        residual = acts.residual3 + (L - 1) * B * T * C; // last residual is in residual3
-        layernorm_forward(acts.lnf, acts.lnf_mean, acts.lnf_rstd, residual, params.lnfw, params.lnfb, B, T, C);
-        long t0 = System.currentTimeMillis();
-        matmulForward.apply(acts.logits, acts.lnf, params.wte, -1, B, T, C, Vp);
-        System.err.printf("final matmulForward took %d ms\n", System.currentTimeMillis() - t0);
-        softmax_forward(acts.probs, acts.logits, B, T, V, Vp);
+        TaskGraph output_layer = new TaskGraph("s0")
+        .transferToDevice(DataTransferMode.EVERY_EXECUTION, params_memory, pointers) // only one execution here
+        .task("t0", GPT2::layernorm_forward, params_memory, acts_memory, pointers, o_lnf, o_lnf_mean, o_lnf_rstd, residual, o_lnfw, o_lnfb, B, T, C)
+        .task("t1", GPT2::matmul_forward, params_memory, acts_memory, pointers, o_logits, o_lnf, o_wte, l_qkvb, B, T, C, Vp)
+        .task("t2", GPT2::softmax_forward, acts_memory, pointers, o_probs, o_logits, B, T, V, Vp)
+        .transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory);
+        TornadoExecutionPlan output_runner = new TornadoExecutionPlan(output_layer.snapshot());
+
+        pointers.set(residual, acts.residual3 + (L - 1) * B * T * C); // last residual is in residual3
+        pointers.set(o_wte, params.wte);
+        pointers.set(l_qkvb, -1);
+        pointers.set(o_lnfw, params.lnfw);
+        pointers.set(o_lnfb, params.lnfb);
+        pointers.set(o_lnf, acts.lnf);
+        pointers.set(o_lnf_mean, acts.lnf_mean);
+        pointers.set(o_lnf_rstd, acts.lnf_rstd);
+        pointers.set(o_logits, acts.logits);
+        pointers.set(o_probs, acts.probs);
+
+        output_runner.execute();
+        try { output_runner.close(); } catch (TornadoExecutionPlanException e) { throw new UnexpectedException(null); }
 
         // also forward the cross-entropy loss function if we have the targets
         if (targets != null) {
