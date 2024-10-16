@@ -6,7 +6,7 @@ A Java port of Andrej Karpathy‘s llm.c that uses TornadoVM for parallelization
 
 - Clone this repository, open in VS Code, adjust path to TornadoVM's JARs in `launch.json`, and build the executables for testing and training.
 
-- Copy `*.bin` files from `llm.c` into this directory and run the test class in a terminal window.
+- Copy `gpt2_*.bin` files from `llm.c` into this directory and run the test class in a terminal window.
 
 ```
 # assuming `llm.c´ is a sibling folder of `llm.java´ (CWD)
