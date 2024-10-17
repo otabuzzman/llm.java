@@ -3,6 +3,6 @@
     "java.project.outputPath": "bin",
     "java.project.referencedLibraries": [
         "lib/**/*.jar",
-        "../TornadoVM/dist/tornado-sdk/tornado-sdk-1.0.9-dev-e74a132/share/**/*.jar"
+        "../TornadoVM/bin/sdk/share/**/*.jar"
     ]
 }
