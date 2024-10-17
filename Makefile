@@ -1,6 +1,6 @@
-.PHONY: TestGpt2
+.PHONY: compile
 
-TestGpt2:
+compile:
 	javac \
 		-classpath "..\TornadoVM\bin\sdk\share\java\tornado\*" \
 		--enable-preview \
