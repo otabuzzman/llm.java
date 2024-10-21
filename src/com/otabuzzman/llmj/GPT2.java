@@ -1214,7 +1214,7 @@ public class GPT2 {
         // TornadoExecutionResult transformer_result = null;
 
         // forward pass
-        long t1 = System.currentTimeMillis();
+        long t0 = System.currentTimeMillis();
         encoder_forward(acts.encoded, params.wte, params.wpe, B, T, C); // encoding goes into residual[0]
         for (int l = 0 ; l < L ; l++) {
             ind.updateForLayer(l);
@@ -1251,7 +1251,9 @@ public class GPT2 {
         .transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory);
         TornadoExecutionPlan output_runner = new TornadoExecutionPlan(output_layer.snapshot());
 
+        long t1 = System.currentTimeMillis();
         output_runner.execute();
+        System.err.printf("final matmul forward took %d ms\n", System.currentTimeMillis() - t1);
         try { output_runner.close(); } catch (TornadoExecutionPlanException e) { throw new UnexpectedException(null); }
 
         // also forward the cross-entropy loss function if we have the targets
@@ -1265,7 +1267,7 @@ public class GPT2 {
             // if we don't have targets, we don't have a loss
             mean_loss = -1.0f;
         }
-        System.err.printf("forward pass took %d ms\n", System.currentTimeMillis() - t1);
+        System.err.printf("forward pass took %d ms\n", System.currentTimeMillis() - t0);
     }
 
     public void zero_grad() {
