@@ -439,9 +439,12 @@ public class GPT2 {
         float scale = 1.0f / (float) Math.sqrt(hs);
 
         // #pragma omp parallel for collapse(3)
-        for (int b = 0 ; b < B ; b++) {
-            for (int t = 0 ; t < T ; t++) {
-                for (int h = 0 ; h < NH ; h++) {
+//        for (int b = 0 ; b < B ; b++) {
+//            for (int t = 0 ; t < T ; t++) {
+//                for (int h = 0 ; h < NH ; h++) {
+        IntStream.range(0, B).parallel().forEach( b -> {
+            IntStream.range(0, T).parallel().forEach( t -> {
+                IntStream.range(0, NH).parallel().forEach( h -> {
                     int query_t = inp + b * T * C3 + t * C3 + h * hs;
                     int preatt_bth = preatt + b * NH * T * T + h * T * T + t * T;
                     int att_bth = att + b * NH * T * T + h * T * T + t * T;
@@ -495,9 +498,9 @@ public class GPT2 {
                             acts_memory.put(out_bth + i, acts_memory.get(out_bth + i) + att_btht2 * acts_memory.get(value_t2 + i));
                         }
                     }
-                }
-            }
-        }
+                });
+            });
+        });
     }
 
     // grads_act, grads_act, grads_act, grads_act, acts, acts
@@ -769,7 +772,9 @@ public class GPT2 {
             // now do the forward pass
             layernorm_forward(l_ln1, l_ln1_mean, l_ln1_rstd, residual, l_ln1w, l_ln1b, B, T, C);
             matmulForward.apply(l_qkv, l_ln1, l_qkvw, l_qkvb, B, T, C, 3 * C);
+            long t2 = System.currentTimeMillis();
             attention_forward(l_atty, l_preatt, l_att, l_qkv, B, T, C, NH);
+            System.err.printf("attention_forward took %d ms\n", System.currentTimeMillis() - t2);
             matmulForward.apply(l_attproj, l_atty, l_attprojw, l_attprojb, B, T, C, C);
             residual_forward(l_residual2, residual, l_attproj, B * T * C);
             layernorm_forward(l_ln2, l_ln2_mean, l_ln2_rstd, l_residual2, l_ln2w, l_ln2b, B, T, C);
