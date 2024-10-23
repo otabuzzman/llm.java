@@ -24,9 +24,13 @@ import java.util.stream.IntStream;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
+import uk.ac.manchester.tornado.api.GridScheduler;
+import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
 import uk.ac.manchester.tornado.api.TornadoExecutionResult;
+import uk.ac.manchester.tornado.api.WorkerGrid;
+import uk.ac.manchester.tornado.api.WorkerGrid3D;
 import uk.ac.manchester.tornado.api.annotations.Parallel;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 import uk.ac.manchester.tornado.api.exceptions.TornadoExecutionPlanException;
@@ -280,6 +284,7 @@ public class GPT2 {
 
                     // pass 1: calculate query dot key and maxval
                     float maxval = -10000.0f; // TODO something better
+
                     for (int t2 = 0; t2 <= t; t2++) {
                         int key_t2 = _inp + b * T * C3 + t2 * C3 + h * hs + C; // +C because it's key
 
@@ -301,7 +306,47 @@ public class GPT2 {
                 }
             }
         }
-     }
+    }
+
+    private static void attention_forward_1st(KernelContext context, FloatArray acts, IntArray pointers, FloatArray handover, int preatt, int inp, int B, int T, int C, int NH) {
+        // input is (B, T, 3C) holding the query, key, value (Q, K, V) vectors
+        // preatt, att are (B, NH, T, T). NH = number of heads, T = sequence length
+        // that holds the pre-attention and post-attention scores (used in backward)
+        // output is (B, T, C)
+        // attention is the only layer that mixes information across time
+        // every other operation is applied at every (b,t) position independently
+        // (and of course, no layer mixes information across batch)
+        int C3 = C * 3;
+        int hs = C / NH; // head size
+        float scale = 1.0f / TornadoMath.sqrt(hs);
+        int _inp = pointers.get(inp);
+
+        int b = context.globalIdx;
+        int t = context.globalIdy;
+        int h = context.globalIdz;
+
+        if (b >= B || t >= T || h >= NH) return;
+
+        int query_t = _inp + b * T * C3 + t * C3 + h * hs;
+        int preatt_bth = pointers.get(preatt) + b * NH * T * T + h * T * T + t * T;
+        // pass 1: calculate query dot key and maxval
+        float maxval = -10000.0f; // TODO something better
+        for (int t2 = 0; t2 <= t; t2++) {
+            int key_t2 = _inp + b * T * C3 + t2 * C3 + h * hs + C; // +C because it's key
+            // (query_t) dot (key_t2)
+            float val = 0.0f;
+            for (int i = 0; i < hs; i++) {
+                val += acts.get(query_t + i) * acts.get(key_t2 + i);
+            }
+            val *= scale;
+            if (val > maxval) {
+                maxval = val;
+            }
+            acts.set(preatt_bth + t2, val);
+        }
+        int current_bth = b * T * NH + t * NH + h;
+        handover.set(current_bth, maxval);
+    }
 
     private static void attention_forward_2nd(FloatArray acts, IntArray pointers, FloatArray handover, int preatt, int att, int B, int T, int C, int NH) {
         // input is (B, T, 3C) holding the query, key, value (Q, K, V) vectors
@@ -1172,13 +1217,22 @@ public class GPT2 {
         .transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory);
         TornadoExecutionPlan transformer_runner_1st = new TornadoExecutionPlan(transformer_block_1st.snapshot());
 
+
+        WorkerGrid attention_grid = new WorkerGrid3D(B, T, NH);
+        GridScheduler attention_scheduler = new GridScheduler();
+        attention_scheduler.setWorkerGrid("tb2.at1", attention_grid);
+        // gridScheduler.setWorkerGrid("tb2.at2", attention_grid);
+        // gridScheduler.setWorkerGrid("tb2.at3", attention_grid);
+        KernelContext attention_context = new KernelContext();
+
         TaskGraph transformer_block_2nd = new TaskGraph("tb2")
         .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory)
         .transferToDevice(DataTransferMode.EVERY_EXECUTION, ind.tensors, acts_memory)
-        .task("at1", GPT2::attention_forward_1st, acts_memory, ind.tensors, handover, ind.preatt, ind.qkv, B, T, C, NH)
-        .task("at2", GPT2::attention_forward_2nd, acts_memory, ind.tensors, handover, ind.preatt, ind.att, B, T, C, NH)
-        .task("at3", GPT2::attention_forward_3rd, acts_memory, ind.tensors, handover, ind.atty, ind.att, ind.qkv, B, T, C, NH)
-        .transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory); // add `handover´ when mixing with non-TornadoVM functions
+        .task("at1", GPT2::attention_forward_1st, attention_context, acts_memory, ind.tensors, handover, ind.preatt, ind.qkv, B, T, C, NH)
+        // .task("at1", GPT2::attention_forward_1st, acts_memory, ind.tensors, handover, ind.preatt, ind.qkv, B, T, C, NH)
+        // .task("at2", GPT2::attention_forward_2nd, acts_memory, ind.tensors, handover, ind.preatt, ind.att, B, T, C, NH)
+        // .task("at3", GPT2::attention_forward_3rd, acts_memory, ind.tensors, handover, ind.atty, ind.att, ind.qkv, B, T, C, NH)
+        .transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory, handover); // add `handover´ when mixing with non-TornadoVM functions
         TornadoExecutionPlan transformer_runner_2nd = new TornadoExecutionPlan(transformer_block_2nd.snapshot());
 
         TaskGraph transformer_block_3rd = new TaskGraph("tb3")
@@ -1220,7 +1274,10 @@ public class GPT2 {
             ind.updateForLayer(l);
             // now do the forward pass
             transformer_runner_1st.execute();
-            transformer_runner_2nd.execute();
+            // transformer_runner_2nd.execute();
+            transformer_runner_2nd.withGridScheduler(attention_scheduler).execute();
+
+            // for (int i = 0 ; i < B * T * NH ; i++) System.err.println(handover.get(i) + " "); System.exit(0);
 
             int l_atty = ind.tensors.get(ind.atty);
             int l_preatt = ind.tensors.get(ind.preatt);
@@ -1228,8 +1285,8 @@ public class GPT2 {
             int l_qkv = ind.tensors.get(ind.qkv);
             // attention_forward(l_atty, l_preatt, l_att, l_qkv, B, T, C, NH);
             // attention_forward_1st(handover, l_preatt, l_qkv, B, T, C, NH);
-            // attention_forward_2nd(handover, l_preatt, l_att, B, T, C, NH);
-            // attention_forward_3rd(handover, l_atty, l_att, l_qkv, B, T, C, NH);
+            attention_forward_2nd(handover, l_preatt, l_att, B, T, C, NH);
+            attention_forward_3rd(handover, l_atty, l_att, l_qkv, B, T, C, NH);
 
             transformer_runner_3rd.execute();
             // transformer_result = transformer_runner.execute();
