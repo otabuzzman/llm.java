@@ -262,6 +262,90 @@ public class GPT2 {
         }
     }
 
+    private static void attention_forward(FloatArray acts, IntArray pointers, int out, int preatt, int att, int inp, int B, int T, int C, int NH) {
+        // input is (B, T, 3C) holding the query, key, value (Q, K, V) vectors
+        // preatt, att are (B, NH, T, T). NH = number of heads, T = sequence length
+        // that holds the pre-attention and post-attention scores (used in backward)
+        // output is (B, T, C)
+        // attention is the only layer that mixes information across time
+        // every other operation is applied at every (b,t) position independently
+        // (and of course, no layer mixes information across batch)
+        int C3 = C * 3;
+        int hs = C / NH; // head size
+        float scale = 1.0f / TornadoMath.sqrt(hs);
+        int _inp = pointers.get(inp);
+
+        // #pragma omp parallel for collapse(3)
+        for (@Parallel int b = 0; b < B; b++) {
+            for (@Parallel int t = 0; t < T; t++) {
+                for (@Parallel int h = 0; h < NH; h++) {
+                    int query_t = _inp + b * T * C3 + t * C3 + h * hs;
+                    int preatt_bth = pointers.get(preatt) + b * NH * T * T + h * T * T + t * T;
+                    int att_bth = pointers.get(att) + b * NH * T * T + h * T * T + t * T;
+
+                    // pass 1: calculate query dot key and maxval
+                    float maxval = -10000.0f; // TODO something better
+                    for (int t2 = 0; t2 < T; t2++) {
+                        // SPIR-V, PTX backends ok
+                        // if (t2 > t) continue;
+
+                        int key_t2 = _inp + b * T * C3 + t2 * C3 + h * hs + C; // +C because it's key
+
+                        // (query_t) dot (key_t2)
+                        float val = 0.0f;
+                        for (int i = 0; i < hs; i++) {
+                            val += acts.get(query_t + i) * acts.get(key_t2 + i);
+                        }
+                        val *= scale;
+                        if (val > maxval) {
+                            maxval = val;
+                        }
+
+                        // OpenCL, PTX backends ok
+                        if (t2 > t) continue;
+                        acts.set(preatt_bth + t2, val);
+                    }
+
+                    // pass 2: calculate the exp and keep track of sum
+                    // maxval is being calculated and subtracted only for numerical stability
+                    float expsum = 0.0f;
+                    for (int t2 = 0; t2 < T; t2++) {
+                        if (t2 > t) continue;
+
+                        float expv = TornadoMath.exp(acts.get(preatt_bth + t2) - maxval);
+                        expsum += expv;
+                        acts.set(att_bth + t2, expv);
+                    }
+                    float expsum_inv = expsum == 0.0f ? 0.0f : 1.0f / expsum;
+
+                    // pass 3: normalize to get the softmax
+                    for (int t2 = 0; t2 < T; t2++) {
+                        if (t2 <= t) {
+                            acts.set(att_bth + t2, acts.get(att_bth + t2) * expsum_inv);
+                        } else {
+                            // causal attention mask. not strictly necessary to set to zero here
+                            // only doing this explicitly for debugging and checking to PyTorch
+                            acts.set(att_bth + t2, 0.0f);
+                        }
+                    }
+
+                    // pass 4: accumulate weighted values into the output of attention
+                    int out_bth = pointers.get(out) + b * T * C + t * C + h * hs;
+                    for (int i = 0; i < hs; i++) { acts.set(out_bth + i, 0.0f); }
+                    for (int t2 = 0; t2 < T; t2++) {
+                        if (t2 > t) continue;
+
+                        int value_t2 = _inp + b * T * C3 + t2 * C3 + h * hs + C*2; // +C*2 because it's value
+                        float att_btht2 = acts.get(att_bth + t2);
+                        for (int i = 0; i < hs; i++) {
+                            acts.set(out_bth + i, acts.get(out_bth + i) + att_btht2 * acts.get(value_t2 + i));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // TornadoVM Loop Parallel API version
     private static void attention_forward_1st(FloatArray acts, IntArray pointers, FloatArray handover, int preatt, int inp, int B, int T, int C, int NH) {
         // input is (B, T, 3C) holding the query, key, value (Q, K, V) vectors
@@ -1246,10 +1330,11 @@ public class GPT2 {
         TaskGraph transformer_block_2nd = new TaskGraph("tb2")
         .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory)
         .transferToDevice(DataTransferMode.EVERY_EXECUTION, ind.tensors, acts_memory)
+        .task("at1", GPT2::attention_forward, acts_memory, ind.tensors, ind.atty, ind.preatt, ind.att, ind.qkv, B, T, C, NH)
         // .task("at1", GPT2::attention_forward_1st, attention_context, acts_memory, ind.tensors, handover, ind.preatt, ind.qkv, B, T, C, NH)
-        .task("at1", GPT2::attention_forward_1st, acts_memory, ind.tensors, handover, ind.preatt, ind.qkv, B, T, C, NH)
-        .task("at2", GPT2::attention_forward_2nd, acts_memory, ind.tensors, handover, ind.preatt, ind.att, B, T, C, NH)
-        .task("at3", GPT2::attention_forward_3rd, acts_memory, ind.tensors, handover, ind.atty, ind.att, ind.qkv, B, T, C, NH)
+        // .task("at1", GPT2::attention_forward_1st, acts_memory, ind.tensors, handover, ind.preatt, ind.qkv, B, T, C, NH)
+        // .task("at2", GPT2::attention_forward_2nd, acts_memory, ind.tensors, handover, ind.preatt, ind.att, B, T, C, NH)
+        // .task("at3", GPT2::attention_forward_3rd, acts_memory, ind.tensors, handover, ind.atty, ind.att, ind.qkv, B, T, C, NH)
         .transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory); // add `handover´ when mixing with non-TornadoVM functions
         TornadoExecutionPlan transformer_runner_2nd = new TornadoExecutionPlan(transformer_block_2nd.snapshot());
 
