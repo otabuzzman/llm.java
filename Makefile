@@ -9,7 +9,7 @@ GPT2BINS = \
 	gpt2_124M_debug_state.bin \
 	gpt2_tokenizer.bin \
 
-.PHONY: compile run
+.PHONY: compile test
 
 compile:
 ifdef winos
@@ -32,11 +32,11 @@ else
 		src/com/otabuzzman/llmj/*.java
 endif
 
-run: $(GPT2BINS)
+test: $(GPT2BINS)
 ifdef winos
-	python %TORNADO_SDK%\bin\tornado --debug --jvm="-Dtb1.device=2:0 -Dtb2.device=0:0 -Dtb3.device=2:0 -Dol.device=2:0" --classpath bin com.otabuzzman.llmj.TestGpt2
+	python %TORNADO_SDK%\bin\tornado --jvm="-Dtb.device=1:0 -Dol.device=2:0 -DUseVectorAPI=true -Dtornado.device.memory=2GB" --classpath bin com.otabuzzman.llmj.TestGpt2
 else
-	tornado --debug --jvm="-Dtb1.device=2:0 -Dtb2.device=0:0 -Dtb3.device=2:0 -Dol.device=2:0" --classpath bin com.otabuzzman.llmj.TestGpt2
+	tornado --jvm="-Dtb.device=1:0 -Dol.device=2:0 -DUseVectorAPI=true -Dtornado.device.memory=2GB" --classpath bin com.otabuzzman.llmj.TestGpt2
 endif
 
 
