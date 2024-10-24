@@ -262,6 +262,7 @@ public class GPT2 {
         }
     }
 
+    // TornadoVM Loop Parallel API version
     private static void attention_forward_1st(FloatArray acts, IntArray pointers, FloatArray handover, int preatt, int inp, int B, int T, int C, int NH) {
         // input is (B, T, 3C) holding the query, key, value (Q, K, V) vectors
         // preatt, att are (B, NH, T, T). NH = number of heads, T = sequence length
@@ -285,12 +286,13 @@ public class GPT2 {
                     // pass 1: calculate query dot key and maxval
                     float maxval = -10000.0f; // TODO something better
 
-                    for (int t2 = 0; t2 <= t; t2++) {
+                    for (int t2 = 0; t2 <= T; t2++) {
+                        // SPIR-V, PTX backends ok
+                        // if ( t2 > t) continue;
                         int key_t2 = _inp + b * T * C3 + t2 * C3 + h * hs + C; // +C because it's key
 
                         // (query_t) dot (key_t2)
                         float val = 0.0f;
-
                         for (int i = 0; i < hs; i++) {
                             val += acts.get(query_t + i) * acts.get(key_t2 + i);
                         }
@@ -299,6 +301,8 @@ public class GPT2 {
                             maxval = val;
                         }
 
+                        // OpenCL, PTX backends ok
+                        if ( t2 > t) continue;
                         acts.set(preatt_bth + t2, val);
                     }
                     int current_bth = b * T * NH + t * NH + h;
@@ -308,6 +312,7 @@ public class GPT2 {
         }
     }
 
+    // TornadoVM Kernel API version
     private static void attention_forward_1st(KernelContext context, FloatArray acts, IntArray pointers, FloatArray handover, int preatt, int inp, int B, int T, int C, int NH) {
         // input is (B, T, 3C) holding the query, key, value (Q, K, V) vectors
         // preatt, att are (B, NH, T, T). NH = number of heads, T = sequence length
@@ -329,10 +334,16 @@ public class GPT2 {
 
         int query_t = _inp + b * T * C3 + t * C3 + h * hs;
         int preatt_bth = pointers.get(preatt) + b * NH * T * T + h * T * T + t * T;
+
         // pass 1: calculate query dot key and maxval
         float maxval = -10000.0f; // TODO something better
-        for (int t2 = 0; t2 <= t; t2++) {
+        // loop-dependency issue `for (int t2 = 0; t2 <= t; t2++)´
+        //                        -----------------------^-------
+        for (int t2 = 0; t2 < T; t2++) { // loop-dependency issue workaround (1/ 2)
+            // SPIR-V, PTX backends ok
+            //if (t2 > t) continue; // loop-dependency issue workaround (2/ 2). must `continue´, `break´ yields error
             int key_t2 = _inp + b * T * C3 + t2 * C3 + h * hs + C; // +C because it's key
+
             // (query_t) dot (key_t2)
             float val = 0.0f;
             for (int i = 0; i < hs; i++) {
@@ -342,6 +353,9 @@ public class GPT2 {
             if (val > maxval) {
                 maxval = val;
             }
+
+            // OpenCL, PTX backends ok
+            if (t2 > t) continue; // loop-dependency issue workaround (2/ 2). must `continue´, `break´ yields error
             acts.set(preatt_bth + t2, val);
         }
         int current_bth = b * T * NH + t * NH + h;
@@ -1228,8 +1242,8 @@ public class GPT2 {
         TaskGraph transformer_block_2nd = new TaskGraph("tb2")
         .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory)
         .transferToDevice(DataTransferMode.EVERY_EXECUTION, ind.tensors, acts_memory)
-        .task("at1", GPT2::attention_forward_1st, attention_context, acts_memory, ind.tensors, handover, ind.preatt, ind.qkv, B, T, C, NH)
-        // .task("at1", GPT2::attention_forward_1st, acts_memory, ind.tensors, handover, ind.preatt, ind.qkv, B, T, C, NH)
+        // .task("at1", GPT2::attention_forward_1st, attention_context, acts_memory, ind.tensors, handover, ind.preatt, ind.qkv, B, T, C, NH)
+        .task("at1", GPT2::attention_forward_1st, acts_memory, ind.tensors, handover, ind.preatt, ind.qkv, B, T, C, NH)
         // .task("at2", GPT2::attention_forward_2nd, acts_memory, ind.tensors, handover, ind.preatt, ind.att, B, T, C, NH)
         // .task("at3", GPT2::attention_forward_3rd, acts_memory, ind.tensors, handover, ind.atty, ind.att, ind.qkv, B, T, C, NH)
         .transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory, handover); // add `handover´ when mixing with non-TornadoVM functions
@@ -1274,8 +1288,8 @@ public class GPT2 {
             ind.updateForLayer(l);
             // now do the forward pass
             transformer_runner_1st.execute();
-            // transformer_runner_2nd.execute();
-            transformer_runner_2nd.withGridScheduler(attention_scheduler).execute();
+            transformer_runner_2nd.execute();
+            // transformer_runner_2nd.withGridScheduler(attention_scheduler).execute();
 
             // for (int i = 0 ; i < B * T * NH ; i++) System.err.println(handover.get(i) + " "); System.exit(0);
 
