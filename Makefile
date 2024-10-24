@@ -15,7 +15,7 @@ compile:
 ifdef winos
 	javac \
 		-classpath "..\TornadoVM\bin\sdk\share\java\tornado\*" \
-		--enable-preview \
+		-g:vars --enable-preview \
 		--add-modules jdk.incubator.vector \
 		-target 21 -source 21 \
 		-Xlint:preview -proc:full \
@@ -24,7 +24,7 @@ ifdef winos
 else
 	javac \
 		-classpath "../TornadoVM/bin/sdk/share/java/tornado/*" \
-		--enable-preview \
+		-g:vars --enable-preview \
 		--add-modules jdk.incubator.vector \
 		-target 21 -source 21 \
 		-Xlint:preview -proc:full \
