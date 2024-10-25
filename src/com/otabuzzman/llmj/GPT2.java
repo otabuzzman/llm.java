@@ -1355,7 +1355,7 @@ public class GPT2 {
         // TornadoExecutionPlan transformer_runner_3rd = new TornadoExecutionPlan(transformer_block_3rd.snapshot());
 
         TaskGraph transformer_block = new TaskGraph("tb")
-        .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory)
+        .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory, acts_memory)
         .transferToDevice(DataTransferMode.EVERY_EXECUTION, ind.tensors)
         .task("ln1", GPT2::layernorm_forward, params_memory, acts_memory, ind.tensors, ind.ln1, ind.ln1_mean, ind.ln1_rstd, ind.residual, ind.ln1w, ind.ln1b, B, T, C)
         .task("mm1", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.qkv, ind.ln1, ind.qkvw, ind.qkvb, B, T, C, 3 * C)
