@@ -206,7 +206,7 @@ public class TestGpt2 {
         try {
             gpt.run();
         } catch (Exception e) {
-            System.err.println(e);
+            e.printStackTrace();
         }
     }
 }

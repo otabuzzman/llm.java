@@ -24,14 +24,10 @@ import java.util.stream.IntStream;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
-import uk.ac.manchester.tornado.api.GridScheduler;
-import uk.ac.manchester.tornado.api.KernelContext;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
-import uk.ac.manchester.tornado.api.TornadoExecutionResult;
-import uk.ac.manchester.tornado.api.WorkerGrid;
-import uk.ac.manchester.tornado.api.WorkerGrid3D;
 import uk.ac.manchester.tornado.api.annotations.Parallel;
+import uk.ac.manchester.tornado.api.common.TaskPackage;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 import uk.ac.manchester.tornado.api.exceptions.TornadoExecutionPlanException;
 import uk.ac.manchester.tornado.api.math.TornadoMath;
@@ -129,48 +125,6 @@ public class GPT2 {
     // the individual TornadoVM layers' forward and backward passes
     // B = batch_size, T = sequence_length, C = channels, V = vocab_size
 
-    // transformer block version with `out´, `mean´, `rstd´, and `inp´ indexing `pointers´ for weights and activation tensors
-    private static void layernorm_forward(FloatArray params, FloatArray acts, IntArray pointers, int out, int mean, int rstd, int inp, int weight, int bias, int B, int T, int C) {
-        // reference: https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html
-        // both inp and out are (B,T,C) of the activations
-        // mean and rstd are (B,T) buffers, to be used later in backward pass
-        // at each position (b,t) of the input, the C-dimensional vector
-        // of activations gets normalized, then scaled and shifted
-        float eps = 1e-5f;
-        for (@Parallel int b = 0 ; b < B ; b++) {
-            for (@Parallel int t = 0 ; t < T ; t++) {
-                // seek to the input position inp[b,t,:]
-                int x = pointers.get(inp) + b * T * C + t * C;
-                // calculate the mean
-                float m = 0.0f;
-                for (int i = 0 ; i < C ; i++) {
-                    m += acts.get(x + i);
-                }
-                m = m / C;
-                // calculate the variance (without any bias correction)
-                float v = 0.0f;
-                for (int i = 0 ; i < C ; i++) {
-                    float xshift = acts.get(x + i) - m;
-                    v += xshift * xshift;
-                }
-                v = v / C;
-                // calculate the rstd (reciprocal standard deviation)
-                float s = 1.0f / TornadoMath.sqrt(v + eps);
-                // seek to the output position in out[b,t,:]
-                int out_bt = pointers.get(out) + b * T * C + t * C;
-                for (int i = 0 ; i < C ; i++) {
-                    float n = (s * (acts.get(x + i) - m)); // normalize
-                    float o = n * params.get(pointers.get(weight) + i) + params.get(pointers.get(bias) + i); // scale and shift
-                    acts.set(out_bt + i, o); // write
-                }
-                // cache the mean and rstd for the backward pass later
-                acts.set(pointers.get(mean) + b * T + t, m);
-                acts.set(pointers.get(rstd) + b * T + t, s);
-            }
-        }
-    }
-
-    // weights and activation tensors in `out´, `mean´, `rstd´, and `inp´
     private static void layernorm_forward(FloatArray params, FloatArray acts, int out, int mean, int rstd, int inp, int weight, int bias, int B, int T, int C) {
         // reference: https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html
         // both inp and out are (B,T,C) of the activations
@@ -211,33 +165,6 @@ public class GPT2 {
         }
     }
 
-    // transformer block version with `out´, `inp´, `weight´, and `bias´ indexing `pointers´ for weights and activation tensors
-    private static void matmul_forward(FloatArray params, FloatArray acts, IntArray pointers, int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
-        // the most naive implementation of matrix multiplication
-        // this serves as an algorithmic reference, and as a fallback for
-        // unfriendly input shapes inside matmul_forward(), below.
-        // #pragma omp parallel for collapse(2)
-        for (@Parallel int b = 0 ; b < B ; b++) {
-            for (@Parallel int t = 0 ; t < T ; t++) {
-                int bt = b * T + t;
-                for (@Parallel int o = 0 ; o < OC ; o++) {
-                    // ERROR : clBuildProgram -> Returned: -11
-                    // '}' mismatch, moved code behind for-loop
-                    // int _bias = pointers.get(bias);
-                    // float val += (_bias != -1) ? params.get(_bias + o) : 0.0f;
-                    float val = 0.0f;
-                    for (int i = 0 ; i < C ; i++) {
-                        val += acts.get(pointers.get(inp) + bt * C + i) * params.get(pointers.get(weight) + o * C + i);
-                    }
-                    int _bias = pointers.get(bias);
-                    val += (_bias != -1) ? params.get(_bias + o) : 0.0f;
-                    acts.set(pointers.get(out) + bt * OC + o, val);
-                }
-            }
-        }
-    }
-
-    // weights and activation tensors in `out´, `inp´, `weight´, and `bias´
     private static void matmul_forward(FloatArray params, FloatArray acts, int out, int inp, int weight, int bias, int B, int T, int C, int OC) {
         // the most naive implementation of matrix multiplication
         // this serves as an algorithmic reference, and as a fallback for
@@ -262,7 +189,7 @@ public class GPT2 {
         }
     }
 
-    private static void attention_forward(FloatArray acts, IntArray pointers, int out, int preatt, int att, int inp, int B, int T, int C, int NH) {
+    private static void attention_forward(FloatArray acts, int out, int preatt, int att, int inp, int B, int T, int C, int NH) {
         // input is (B, T, 3C) holding the query, key, value (Q, K, V) vectors
         // preatt, att are (B, NH, T, T). NH = number of heads, T = sequence length
         // that holds the pre-attention and post-attention scores (used in backward)
@@ -273,15 +200,14 @@ public class GPT2 {
         int C3 = C * 3;
         int hs = C / NH; // head size
         float scale = 1.0f / TornadoMath.sqrt(hs);
-        int _inp = pointers.get(inp);
 
         // #pragma omp parallel for collapse(3)
         for (@Parallel int b = 0; b < B; b++) {
             for (@Parallel int t = 0; t < T; t++) {
                 for (@Parallel int h = 0; h < NH; h++) {
-                    int query_t = _inp + b * T * C3 + t * C3 + h * hs;
-                    int preatt_bth = pointers.get(preatt) + b * NH * T * T + h * T * T + t * T;
-                    int att_bth = pointers.get(att) + b * NH * T * T + h * T * T + t * T;
+                    int query_t = inp + b * T * C3 + t * C3 + h * hs;
+                    int preatt_bth = preatt + b * NH * T * T + h * T * T + t * T;
+                    int att_bth = att + b * NH * T * T + h * T * T + t * T;
 
                     // pass 1: calculate query dot key and maxval
                     float maxval = -10000.0f; // TODO something better
@@ -289,7 +215,7 @@ public class GPT2 {
                         // SPIR-V, PTX backends ok
                         // if (t2 > t) continue;
 
-                        int key_t2 = _inp + b * T * C3 + t2 * C3 + h * hs + C; // +C because it's key
+                        int key_t2 = inp + b * T * C3 + t2 * C3 + h * hs + C; // +C because it's key
 
                         // (query_t) dot (key_t2)
                         float val = 0.0f;
@@ -330,12 +256,12 @@ public class GPT2 {
                     }
 
                     // pass 4: accumulate weighted values into the output of attention
-                    int out_bth = pointers.get(out) + b * T * C + t * C + h * hs;
+                    int out_bth = out + b * T * C + t * C + h * hs;
                     for (int i = 0; i < hs; i++) { acts.set(out_bth + i, 0.0f); }
                     for (int t2 = 0; t2 < T; t2++) {
                         if (t2 > t) continue;
 
-                        int value_t2 = _inp + b * T * C3 + t2 * C3 + h * hs + C*2; // +C*2 because it's value
+                        int value_t2 = inp + b * T * C3 + t2 * C3 + h * hs + C*2; // +C*2 because it's value
                         float att_btht2 = acts.get(att_bth + t2);
                         for (int i = 0; i < hs; i++) {
                             acts.set(out_bth + i, acts.get(out_bth + i) + att_btht2 * acts.get(value_t2 + i));
@@ -346,211 +272,18 @@ public class GPT2 {
         }
     }
 
-    // TornadoVM Loop Parallel API version
-    private static void attention_forward_1st(FloatArray acts, IntArray pointers, FloatArray handover, int preatt, int inp, int B, int T, int C, int NH) {
-        // input is (B, T, 3C) holding the query, key, value (Q, K, V) vectors
-        // preatt, att are (B, NH, T, T). NH = number of heads, T = sequence length
-        // that holds the pre-attention and post-attention scores (used in backward)
-        // output is (B, T, C)
-        // attention is the only layer that mixes information across time
-        // every other operation is applied at every (b,t) position independently
-        // (and of course, no layer mixes information across batch)
-        int C3 = C * 3;
-        int hs = C / NH; // head size
-        float scale = 1.0f / TornadoMath.sqrt(hs);
-        int _inp = pointers.get(inp);
-
-        // #pragma omp parallel for collapse(3)
-        for (@Parallel int b = 0 ; b < B ; b++) {
-            for (@Parallel int t = 0 ; t < T ; t++) {
-                for (@Parallel int h = 0 ; h < NH ; h++) {
-                    int query_t = _inp + b * T * C3 + t * C3 + h * hs;
-                    int preatt_bth = pointers.get(preatt) + b * NH * T * T + h * T * T + t * T;
-
-                    // pass 1: calculate query dot key and maxval
-                    float maxval = -10000.0f; // TODO something better
-
-                    for (int t2 = 0; t2 <= T; t2++) {
-                        // SPIR-V, PTX backends ok
-                        // if ( t2 > t) continue;
-                        int key_t2 = _inp + b * T * C3 + t2 * C3 + h * hs + C; // +C because it's key
-
-                        // (query_t) dot (key_t2)
-                        float val = 0.0f;
-                        for (int i = 0; i < hs; i++) {
-                            val += acts.get(query_t + i) * acts.get(key_t2 + i);
-                        }
-                        val *= scale;
-                        if (val > maxval) {
-                            maxval = val;
-                        }
-
-                        // OpenCL, PTX backends ok
-                        if ( t2 > t) continue;
-                        acts.set(preatt_bth + t2, val);
-                    }
-                    int current_bth = b * T * NH + t * NH + h;
-                    handover.set(current_bth, maxval);
-                }
-            }
-        }
-    }
-
-    // TornadoVM Kernel API version
-    private static void attention_forward_1st(KernelContext context, FloatArray acts, IntArray pointers, FloatArray handover, int preatt, int inp, int B, int T, int C, int NH) {
-        // input is (B, T, 3C) holding the query, key, value (Q, K, V) vectors
-        // preatt, att are (B, NH, T, T). NH = number of heads, T = sequence length
-        // that holds the pre-attention and post-attention scores (used in backward)
-        // output is (B, T, C)
-        // attention is the only layer that mixes information across time
-        // every other operation is applied at every (b,t) position independently
-        // (and of course, no layer mixes information across batch)
-        int C3 = C * 3;
-        int hs = C / NH; // head size
-        float scale = 1.0f / TornadoMath.sqrt(hs);
-        int _inp = pointers.get(inp);
-
-        int b = context.globalIdx;
-        int t = context.globalIdy;
-        int h = context.globalIdz;
-
-        if (b >= B || t >= T || h >= NH) return;
-
-        int query_t = _inp + b * T * C3 + t * C3 + h * hs;
-        int preatt_bth = pointers.get(preatt) + b * NH * T * T + h * T * T + t * T;
-
-        // pass 1: calculate query dot key and maxval
-        float maxval = -10000.0f; // TODO something better
-        // loop-dependency issue `for (int t2 = 0; t2 <= t; t2++)´
-        //                        -----------------------^-------
-        for (int t2 = 0; t2 < T; t2++) { // loop-dependency issue workaround (1/ 2)
-            // SPIR-V, PTX backends ok
-            // if (t2 > t) continue; // loop-dependency issue workaround (2/ 2). must `continue´, `break´ yields error
-            int key_t2 = _inp + b * T * C3 + t2 * C3 + h * hs + C; // +C because it's key
-
-            // (query_t) dot (key_t2)
-            float val = 0.0f;
-            for (int i = 0; i < hs; i++) {
-                val += acts.get(query_t + i) * acts.get(key_t2 + i);
-            }
-            val *= scale;
-            if (val > maxval) {
-                maxval = val;
-            }
-
-            // OpenCL, PTX backends ok
-            if (t2 > t) continue; // loop-dependency issue workaround (2/ 2). must `continue´, `break´ yields error
-            acts.set(preatt_bth + t2, val);
-        }
-        int current_bth = b * T * NH + t * NH + h;
-        handover.set(current_bth, maxval);
-    }
-
-    private static void attention_forward_2nd(FloatArray acts, IntArray pointers, FloatArray handover, int preatt, int att, int B, int T, int C, int NH) {
-        // input is (B, T, 3C) holding the query, key, value (Q, K, V) vectors
-        // preatt, att are (B, NH, T, T). NH = number of heads, T = sequence length
-        // that holds the pre-attention and post-attention scores (used in backward)
-        // output is (B, T, C)
-        // attention is the only layer that mixes information across time
-        // every other operation is applied at every (b,t) position independently
-        // (and of course, no layer mixes information across batch)
-
-        // #pragma omp parallel for collapse(3)
-        for (@Parallel int b = 0 ; b < B ; b++) {
-            for (@Parallel int t = 0 ; t < T ; t++) {
-                for (@Parallel int h = 0 ; h < NH ; h++) {
-                    int preatt_bth = pointers.get(preatt) + b * NH * T * T + h * T * T + t * T;
-                    int att_bth = pointers.get(att) + b * NH * T * T + h * T * T + t * T;
-
-                    // pass 2: calculate the exp and keep track of sum
-                    // maxval is being calculated and subtracted only for numerical stability
-                    int current_bth = b * T * NH + t * NH + h;
-                    float maxval = handover.get(current_bth);
-                    float expsum = 0.0f;
-                    for (int t2 = 0; t2 < T; t2++) {
-                        if (t2 > t) continue; // SPIR-V, OpenCL, PTX backends ok
-
-                        float expv = TornadoMath.exp(acts.get(preatt_bth + t2) - maxval);
-                        expsum += expv;
-                        acts.set(att_bth + t2, expv);
-                    }
-                    // ERROR : clBuildProgram -> Returned: -11
-                    // float expsum_inv = 0.0f;
-                    // if (expsum > 0.0f || 0.0f > expsum) {
-                    //     expsum_inv = 1.0f / expsum;
-                    // }
-                    // ERROR : clBuildProgram -> Returned: -11
-                    // float expsum_inv = (expsum == 0.0f) ? 0.0f : 1.0f / expsum;
-                    handover.set(current_bth, expsum); // expsum_inv calculation moved to next task
-                }
-            }
-        }
-    }
-
-    private static void attention_forward_3rd(FloatArray acts, IntArray pointers, FloatArray handover, int out, int att, int inp, int B, int T, int C, int NH) {
-        // input is (B, T, 3C) holding the query, key, value (Q, K, V) vectors
-        // preatt, att are (B, NH, T, T). NH = number of heads, T = sequence length
-        // that holds the pre-attention and post-attention scores (used in backward)
-        // output is (B, T, C)
-        // attention is the only layer that mixes information across time
-        // every other operation is applied at every (b,t) position independently
-        // (and of course, no layer mixes information across batch)
-        int C3 = C * 3;
-        int hs = C / NH; // head size
-
-        // #pragma omp parallel for collapse(3)
-        for (@Parallel int b = 0 ; b < B ; b++) {
-            for (@Parallel int t = 0 ; t < T ; t++) {
-                for (@Parallel int h = 0 ; h < NH ; h++) {
-                    int att_bth = pointers.get(att) + b * NH * T * T + h * T * T + t * T;
-
-                    int current_bth = b * T * NH + t * NH + h;
-                    float expsum = handover.get(current_bth);
-                    float expsum_inv = 0.0f;
-                    if (expsum > 0.0f || 0.0f > expsum) {
-                        expsum_inv = 1.0f / expsum;
-                    }
-
-                    // pass 3: normalize to get the softmax
-                    for (int t2 = 0; t2 < T; t2++) {
-                        if (t2 <= t) {
-                            acts.set(att_bth + t2, acts.get(att_bth + t2) * expsum_inv);
-                        } else {
-                            // causal attention mask. not strictly necessary to set to zero here
-                            // only doing this explicitly for debugging and checking to PyTorch
-                            acts.set(att_bth + t2, 0.0f);
-                        }
-                    }
-
-                    // pass 4: accumulate weighted values into the output of attention
-                    int out_bth = pointers.get(out) + b * T * C + t * C + h * hs;
-                    for (int i = 0; i < hs; i++) { acts.set(out_bth + i, 0.0f); }
-                    for (int t2 = 0; t2 < T; t2++) {
-                        if (t2 > t) continue; // SPIR-V, OpenCL, PTX backends ok
-
-                        int value_t2 = pointers.get(inp) + b * T * C3 + t2 * C3 + h * hs + C*2; // +C*2 because it's value
-                        float att_btht2 = acts.get(att_bth + t2);
-                        for (int i = 0; i < hs; i++) {
-                            acts.set(out_bth + i, acts.get(out_bth + i) + att_btht2 * acts.get(value_t2 + i));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private static void gelu_forward(FloatArray acts, IntArray pointers, int out, int inp, int N) {
+    private static void gelu_forward(FloatArray acts, int out, int inp, int N) {
         // (approximate) GeLU elementwise non-linearity in the MLP block of Transformer
         for (@Parallel int i = 0 ; i < N ; i++) {
-            float x = acts.get(pointers.get(inp) + i);
+            float x = acts.get(inp + i);
             float cube = 0.044715f * x * x * x;
-            acts.set(pointers.get(out) + i, 0.5f * x * (1.0f + TornadoMath.tanh(GELU_SCALING_FACTOR * (x + cube))));
+            acts.set(out + i, 0.5f * x * (1.0f + TornadoMath.tanh(GELU_SCALING_FACTOR * (x + cube))));
         }
     }
 
-    private static void residual_forward(FloatArray acts, IntArray pointers, int out, int inp1, int inp2, int N) {
+    private static void residual_forward(FloatArray acts, int out, int inp1, int inp2, int N) {
         for (@Parallel int i = 0 ; i < N ; i++) {
-            acts.set(pointers.get(out) + i, acts.get(pointers.get(inp1) + i) + acts.get(pointers.get(inp2) + i));
+            acts.set(out + i, acts.get(inp1 + i) + acts.get(inp2 + i));
         }
     }
 
@@ -961,131 +694,6 @@ public class GPT2 {
         });
     }
 
-    public void attention_forward_1st(FloatArray handover, int preatt, int inp, int B, int T, int C, int NH) {
-        // input is (B, T, 3C) holding the query, key, value (Q, K, V) vectors
-        // preatt, att are (B, NH, T, T). NH = number of heads, T = sequence length
-        // that holds the pre-attention and post-attention scores (used in backward)
-        // output is (B, T, C)
-        // attention is the only layer that mixes information across time
-        // every other operation is applied at every (b,t) position independently
-        // (and of course, no layer mixes information across batch)
-        int C3 = C * 3;
-        int hs = C / NH; // head size
-        float scale = 1.0f / TornadoMath.sqrt(hs);
-
-        // #pragma omp parallel for collapse(3)
-        IntStream.range(0, B).parallel().forEach( b -> {
-            IntStream.range(0, T).parallel().forEach( t -> {
-                IntStream.range(0, NH).parallel().forEach( h -> {
-                    int query_t = inp + b * T * C3 + t * C3 + h * hs;
-                    int preatt_bth = preatt + b * NH * T * T + h * T * T + t * T;
-                    int current_bth = b * T * NH + t * NH + h;
-
-                    // pass 1: calculate query dot key and maxval
-                    float maxval = -10000.0f; // TODO something better
-                    for (int t2 = 0; t2 <= t; t2++) {
-                        int key_t2 = inp + b * T * C3 + t2 * C3 + h * hs + C; // +C because it's key
-
-                        // (query_t) dot (key_t2)
-                        float val = 0.0f;
-                        for (int i = 0; i < hs; i++) {
-                            val += acts_memory.get(query_t + i) * acts_memory.get(key_t2 + i);
-                        }
-                        val *= scale;
-                        if (val > maxval) {
-                            maxval = val;
-                        }
-
-                        acts_memory.set(preatt_bth + t2, val);
-                    }
-                    handover.set(current_bth, maxval);
-                });
-            });
-        });
-    }
-
-    public void attention_forward_2nd(FloatArray handover, int preatt, int att, int B, int T, int C, int NH) {
-        // input is (B, T, 3C) holding the query, key, value (Q, K, V) vectors
-        // preatt, att are (B, NH, T, T). NH = number of heads, T = sequence length
-        // that holds the pre-attention and post-attention scores (used in backward)
-        // output is (B, T, C)
-        // attention is the only layer that mixes information across time
-        // every other operation is applied at every (b,t) position independently
-        // (and of course, no layer mixes information across batch)
-
-        // #pragma omp parallel for collapse(3)
-        IntStream.range(0, B).parallel().forEach( b -> {
-            IntStream.range(0, T).parallel().forEach( t -> {
-                IntStream.range(0, NH).parallel().forEach( h -> {
-                    int preatt_bth = preatt + b * NH * T * T + h * T * T + t * T;
-                    int att_bth = att + b * NH * T * T + h * T * T + t * T;
-                    int current_bth = b * T * NH + t * NH + h;
-
-                    // pass 2: calculate the exp and keep track of sum
-                    // maxval is being calculated and subtracted only for numerical stability
-                    float maxval = handover.get(current_bth);
-                    float expsum = 0.0f;
-                    for (int t2 = 0; t2 <= t; t2++) {
-                        float expv = TornadoMath.exp(acts_memory.get(preatt_bth + t2) - maxval);
-                        expsum += expv;
-                        acts_memory.set(att_bth + t2, expv);
-                    }
-                    handover.set(current_bth, expsum);
-                });
-            });
-        });
-    }
-
-    public void attention_forward_3rd(FloatArray handover, int out, int att, int inp, int B, int T, int C, int NH) {
-        // input is (B, T, 3C) holding the query, key, value (Q, K, V) vectors
-        // preatt, att are (B, NH, T, T). NH = number of heads, T = sequence length
-        // that holds the pre-attention and post-attention scores (used in backward)
-        // output is (B, T, C)
-        // attention is the only layer that mixes information across time
-        // every other operation is applied at every (b,t) position independently
-        // (and of course, no layer mixes information across batch)
-        int C3 = C * 3;
-        int hs = C / NH; // head size
-
-        // #pragma omp parallel for collapse(3)
-        IntStream.range(0, B).parallel().forEach( b -> {
-            IntStream.range(0, T).parallel().forEach( t -> {
-                IntStream.range(0, NH).parallel().forEach( h -> {
-                    int att_bth = att + b * NH * T * T + h * T * T + t * T;
-                    int current_bth = b * T * NH + t * NH + h;
-
-                    float expsum_inv = 0.0f;
-                    float expsum = handover.get(current_bth);
-                    if (expsum > 0.0f || 0.0f > expsum) {
-                        expsum_inv = 1.0f / expsum;
-                    }
-
-                    // pass 3: normalize to get the softmax
-                    for (int t2 = 0; t2 < T; t2++) {
-                        if (t2 <= t) {
-                            acts_memory.set(att_bth + t2, acts_memory.get(att_bth + t2) * expsum_inv);
-                        } else {
-                            // causal attention mask. not strictly necessary to set to zero here
-                            // only doing this explicitly for debugging and checking to PyTorch
-                            acts_memory.set(att_bth + t2, 0.0f);
-                        }
-                    }
-
-                    // pass 4: accumulate weighted values into the output of attention
-                    int out_bth = out + b * T * C + t * C + h * hs;
-                    for (int i = 0; i < hs; i++) { acts_memory.set(out_bth + i, 0.0f); }
-                    for (int t2 = 0; t2 <= t; t2++) {
-                        int value_t2 = inp + b * T * C3 + t2 * C3 + h * hs + C*2; // +C*2 because it's value
-                        float att_btht2 = acts_memory.get(att_bth + t2);
-                        for (int i = 0; i < hs; i++) {
-                            acts_memory.set(out_bth + i, acts_memory.get(out_bth + i) + att_btht2 * acts_memory.get(value_t2 + i));
-                        }
-                    }
-                });
-            });
-        });
-    }
-
     // grads_acts, grads_acts, grads_acts, grads_acts, acts, acts
     public void attention_backward(int dinp, int dpreatt, int datt, int dout, int inp, int att, int B, int T, int C, int NH) {
         // inp/dinp are (B, T, 3C) Q,K,V
@@ -1308,117 +916,36 @@ public class GPT2 {
             for (int i = 0 ; i < targets.capacity() ; i++) this.targets.set(i, targets.get(i));
         }
 
-        TensorIndices ind = new TensorIndices(params, acts, B, T, C, NH);
-        // FloatArray handover = new FloatArray(B * T * NH); // to pass data between attention layers
-
-        // TaskGraph transformer_block_1st = new TaskGraph("tb1")
-        // .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory)
-        // .transferToDevice(DataTransferMode.EVERY_EXECUTION, ind.tensors, acts_memory)
-        // .task("ln1", GPT2::layernorm_forward, params_memory, acts_memory, ind.tensors, ind.ln1, ind.ln1_mean, ind.ln1_rstd, ind.residual, ind.ln1w, ind.ln1b, B, T, C)
-        // .task("mm1", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.qkv, ind.ln1, ind.qkvw, ind.qkvb, B, T, C, 3 * C)
-        // .transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory);
-        // TornadoExecutionPlan transformer_runner_1st = new TornadoExecutionPlan(transformer_block_1st.snapshot());
-
-        // // prepare for Kernel API usage
-        // WorkerGrid attention_grid = new WorkerGrid3D(B, T, NH);
-        // GridScheduler attention_scheduler = new GridScheduler();
-        // attention_scheduler.setWorkerGrid("tb2.at1", attention_grid);#
-        // // same grid for all attention tasks
-        // // gridScheduler.setWorkerGrid("tb2.at2", attention_grid);
-        // // gridScheduler.setWorkerGrid("tb2.at3", attention_grid);
-        // KernelContext attention_context = new KernelContext();
-
-        // TaskGraph transformer_block_2nd = new TaskGraph("tb2")
-        // .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory)
-        // .transferToDevice(DataTransferMode.EVERY_EXECUTION, ind.tensors, acts_memory)
-        // .task("at", GPT2::attention_forward, acts_memory, ind.tensors, ind.atty, ind.preatt, ind.att, ind.qkv, B, T, C, NH)
-        // // use Kernel API (only attention_forward_1st)
-        // .task("at1", GPT2::attention_forward_1st, attention_context, acts_memory, ind.tensors, handover, ind.preatt, ind.qkv, B, T, C, NH)
-        // // use Loop Parallel API
-        // .task("at1", GPT2::attention_forward_1st, acts_memory, ind.tensors, handover, ind.preatt, ind.qkv, B, T, C, NH)
-        // .task("at2", GPT2::attention_forward_2nd, acts_memory, ind.tensors, handover, ind.preatt, ind.att, B, T, C, NH)
-        // .task("at3", GPT2::attention_forward_3rd, acts_memory, ind.tensors, handover, ind.atty, ind.att, ind.qkv, B, T, C, NH)
-        // .transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory); // add `handover´ when mixing with non-TornadoVM functions
-        // TornadoExecutionPlan transformer_runner_2nd = new TornadoExecutionPlan(transformer_block_2nd.snapshot());
-
-        // TaskGraph transformer_block_3rd = new TaskGraph("tb3")
-        // .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory)
-        // .transferToDevice(DataTransferMode.EVERY_EXECUTION, ind.tensors, acts_memory)
-        // .task("mm2", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.attproj, ind.atty, ind.attprojw, ind.attprojb, B, T, C, C)
-        // .task("rs1", GPT2::residual_forward, acts_memory, ind.tensors, ind.residual2, ind.residual, ind.attproj, B * T * C)
-        // .task("ln2", GPT2::layernorm_forward, params_memory, acts_memory, ind.tensors, ind.ln2, ind.ln2_mean, ind.ln2_rstd, ind.residual2, ind.ln2w, ind.ln2b, B, T, C)
-        // .task("mm3", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.fch, ind.ln2, ind.fcw, ind.fcb, B, T, C, 4 * C)
-        // .task("ge", GPT2::gelu_forward, acts_memory, ind.tensors, ind.fch_gelu, ind.fch, B * T * 4 * C)
-        // .task("mm4", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.fcproj, ind.fch_gelu, ind.fcprojw, ind.fcprojb, B, T, 4 * C, C)
-        // .task("rs2", GPT2::residual_forward, acts_memory, ind.tensors, ind.residual3, ind.residual2, ind.fcproj, B * T * C)
-        // .transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory);
-        // TornadoExecutionPlan transformer_runner_3rd = new TornadoExecutionPlan(transformer_block_3rd.snapshot());
-
-        TaskGraph transformer_block = new TaskGraph("tb")
-        .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory)
-        .transferToDevice(DataTransferMode.EVERY_EXECUTION, ind.tensors)
-        .task("ln1", GPT2::layernorm_forward, params_memory, acts_memory, ind.tensors, ind.ln1, ind.ln1_mean, ind.ln1_rstd, ind.residual, ind.ln1w, ind.ln1b, B, T, C)
-        .task("mm1", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.qkv, ind.ln1, ind.qkvw, ind.qkvb, B, T, C, 3 * C)
-        .task("at", GPT2::attention_forward, acts_memory, ind.tensors, ind.atty, ind.preatt, ind.att, ind.qkv, B, T, C, NH)
-        // .task("at1", GPT2::attention_forward_1st, acts_memory, ind.tensors, handover, ind.preatt, ind.qkv, B, T, C, NH)
-        // .task("at2", GPT2::attention_forward_2nd, acts_memory, ind.tensors, handover, ind.preatt, ind.att, B, T, C, NH)
-        // .task("at3", GPT2::attention_forward_3rd, acts_memory, ind.tensors, handover, ind.atty, ind.att, ind.qkv, B, T, C, NH)
-        .task("mm2", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.attproj, ind.atty, ind.attprojw, ind.attprojb, B, T, C, C)
-        .task("rs1", GPT2::residual_forward, acts_memory, ind.tensors, ind.residual2, ind.residual, ind.attproj, B * T * C)
-        .task("ln2", GPT2::layernorm_forward, params_memory, acts_memory, ind.tensors, ind.ln2, ind.ln2_mean, ind.ln2_rstd, ind.residual2, ind.ln2w, ind.ln2b, B, T, C)
-        .task("mm3", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.fch, ind.ln2, ind.fcw, ind.fcb, B, T, C, 4 * C)
-        .task("ge", GPT2::gelu_forward, acts_memory, ind.tensors, ind.fch_gelu, ind.fch, B * T * 4 * C)
-        .task("mm4", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.fcproj, ind.fch_gelu, ind.fcprojw, ind.fcprojb, B, T, 4 * C, C)
-        .task("rs2", GPT2::residual_forward, acts_memory, ind.tensors, ind.residual3, ind.residual2, ind.fcproj, B * T * C)
-        .transferToHost(DataTransferMode.UNDER_DEMAND, acts_memory);
-        TornadoExecutionPlan transformer_runner = new TornadoExecutionPlan(transformer_block.snapshot());
-        TornadoExecutionResult transformer_result = null;
-
-        // forward pass
+        TensorPointers t = new TensorPointers(params, acts, B, T, C, NH);
         long t0 = System.currentTimeMillis();
         encoder_forward(acts.encoded, params.wte, params.wpe, B, T, C); // encoding goes into residual[0]
+
+        TaskGraph gpt2 = new TaskGraph("gpt2");
+        gpt2.transferToDevice(DataTransferMode.EVERY_EXECUTION, params_memory, acts_memory);
+
         for (int l = 0 ; l < L ; l++) {
-            ind.updateForLayer(l);
-            // now do the forward pass
-            // transformer_runner_1st.execute();
-            // transformer_runner_2nd.execute();
-            // transformer_runner_2nd.withGridScheduler(attention_scheduler).execute();
+            t.updateForLayer(l);
 
-            // for (int i = 0 ; i < B * T * NH ; i++) System.err.println(handover.get(i) + " "); System.exit(0);
-
-            int l_atty = ind.tensors.get(ind.atty);
-            int l_preatt = ind.tensors.get(ind.preatt);
-            int l_att = ind.tensors.get(ind.att);
-            int l_qkv = ind.tensors.get(ind.qkv);
-            // attention_forward(l_atty, l_preatt, l_att, l_qkv, B, T, C, NH);
-            // attention_forward_1st(handover, l_preatt, l_qkv, B, T, C, NH);
-            // attention_forward_2nd(handover, l_preatt, l_att, B, T, C, NH);
-            // attention_forward_3rd(handover, l_atty, l_att, l_qkv, B, T, C, NH);
-
-            // transformer_runner_3rd.execute();
-            transformer_result = transformer_runner.execute();
+            gpt2.addTask(new TaskPackage("ln1" + "-l" + l, GPT2::layernorm_forward, params_memory, acts_memory, t.ln1, t.ln1_mean, t.ln1_rstd, t.residual, t.ln1w, t.ln1b, B, T, C));
+            gpt2.addTask(new TaskPackage("mm1" + "-l" + l, GPT2::matmul_forward, params_memory, acts_memory, t.qkv, t.ln1, t.qkvw, t.qkvb, B, T, C, 3 * C));
+            gpt2.addTask(new TaskPackage("at" + "-l" + l, GPT2::attention_forward, acts_memory, t.atty, t.preatt, t.att, t.qkv, B, T, C, NH));
+            gpt2.addTask(new TaskPackage("mm2" + "-l" + l, GPT2::matmul_forward, params_memory, acts_memory, t.attproj, t.atty, t.attprojw, t.attprojb, B, T, C, C));
+            gpt2.addTask(new TaskPackage("rs1" + "-l" + l, GPT2::residual_forward, acts_memory, t.residual2, t.residual, t.attproj, B * T * C));
+            gpt2.addTask(new TaskPackage("ln2" + "-l" + l, GPT2::layernorm_forward, params_memory, acts_memory, t.ln2, t.ln2_mean, t.ln2_rstd, t.residual2, t.ln2w, t.ln2b, B, T, C));
+            gpt2.addTask(new TaskPackage("mm3" + "-l" + l, GPT2::matmul_forward, params_memory, acts_memory, t.fch, t.ln2, t.fcw, t.fcb, B, T, C, 4 * C));
+            gpt2.addTask(new TaskPackage("ge" + "-l" + l, GPT2::gelu_forward, acts_memory, t.fch_gelu, t.fch, B * T * 4 * C));
+            gpt2.addTask(new TaskPackage("mm4" + "-l" + l, GPT2::matmul_forward, params_memory, acts_memory, t.fcproj, t.fch_gelu, t.fcprojw, t.fcprojb, B, T, 4 * C, C));
+            gpt2.addTask(new TaskPackage("rs2" + "-l" + l, GPT2::residual_forward, acts_memory, t.residual3, t.residual2, t.fcproj, B * T * C));
         }
-        transformer_result.transferToHost(acts_memory);
-        try {
-            // transformer_runner_1st.close();
-            // transformer_runner_2nd.close();
-            // transformer_runner_3rd.close();
-            transformer_runner.close();
-        } catch (TornadoExecutionPlanException e) { throw new UnexpectedException(null); }
-
         int residual = acts.residual3 + (L - 1) * B * T * C; // last residual is in residual3
-        TaskGraph output_layer = new TaskGraph("ol")
-        .transferToDevice(DataTransferMode.EVERY_EXECUTION, params_memory, acts_memory) // only one execution here
-        .task("ln", GPT2::layernorm_forward, params_memory, acts_memory, acts.lnf, acts.lnf_mean, acts.lnf_rstd, residual, params.lnfw, params.lnfb, B, T, C)
-        .task("mm", GPT2::matmul_forward, params_memory, acts_memory, acts.logits, acts.lnf, params.wte, -1, B, T, C, Vp)
-        .task("sm", GPT2::softmax_forward, acts_memory, acts.probs, acts.logits, B, T, V, Vp)
-        .transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory);
-        TornadoExecutionPlan output_runner = new TornadoExecutionPlan(output_layer.snapshot());
+        gpt2.addTask(new TaskPackage("ln", GPT2::layernorm_forward, params_memory, acts_memory, acts.lnf, acts.lnf_mean, acts.lnf_rstd, residual, params.lnfw, params.lnfb, B, T, C));
+        gpt2.addTask(new TaskPackage("mm", GPT2::matmul_forward, params_memory, acts_memory, acts.logits, acts.lnf, params.wte, -1, B, T, C, Vp));
+        gpt2.addTask(new TaskPackage("sm", GPT2::softmax_forward, acts_memory, acts.probs, acts.logits, B, T, V, Vp));
+        gpt2.transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory);
 
-        long t1 = System.currentTimeMillis();
-        output_runner.execute();
-        System.err.printf("final matmul forward took %d ms\n", System.currentTimeMillis() - t1);
-        try { output_runner.close(); } catch (TornadoExecutionPlanException e) { throw new UnexpectedException(null); }
+        TornadoExecutionPlan gpt2_runner = new TornadoExecutionPlan(gpt2.snapshot());
+        gpt2_runner.execute();
+        try { gpt2_runner.close(); } catch (TornadoExecutionPlanException e) { throw new UnexpectedException(null); }
 
         // also forward the cross-entropy loss function if we have the targets
         if (targets != null) {
