@@ -1309,60 +1309,41 @@ public class GPT2 {
         }
 
         TensorIndices ind = new TensorIndices(params, acts, B, T, C, NH);
-        // FloatArray handover = new FloatArray(B * T * NH); // to pass data between attention layers
+        FloatArray handover = new FloatArray(B * T * NH); // to pass data between attention layers
 
-        // TaskGraph transformer_block_1st = new TaskGraph("tb1")
-        // .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory)
-        // .transferToDevice(DataTransferMode.EVERY_EXECUTION, ind.tensors, acts_memory)
-        // .task("ln1", GPT2::layernorm_forward, params_memory, acts_memory, ind.tensors, ind.ln1, ind.ln1_mean, ind.ln1_rstd, ind.residual, ind.ln1w, ind.ln1b, B, T, C)
-        // .task("mm1", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.qkv, ind.ln1, ind.qkvw, ind.qkvb, B, T, C, 3 * C)
-        // .transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory);
-        // TornadoExecutionPlan transformer_runner_1st = new TornadoExecutionPlan(transformer_block_1st.snapshot());
-
-        // // prepare for Kernel API usage
-        // WorkerGrid attention_grid = new WorkerGrid3D(B, T, NH);
-        // GridScheduler attention_scheduler = new GridScheduler();
-        // attention_scheduler.setWorkerGrid("tb2.at1", attention_grid);#
-        // // same grid for all attention tasks
-        // // gridScheduler.setWorkerGrid("tb2.at2", attention_grid);
-        // // gridScheduler.setWorkerGrid("tb2.at3", attention_grid);
-        // KernelContext attention_context = new KernelContext();
-
-        // TaskGraph transformer_block_2nd = new TaskGraph("tb2")
-        // .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory)
-        // .transferToDevice(DataTransferMode.EVERY_EXECUTION, ind.tensors, acts_memory)
-        // .task("at", GPT2::attention_forward, acts_memory, ind.tensors, ind.atty, ind.preatt, ind.att, ind.qkv, B, T, C, NH)
-        // // use Kernel API (only attention_forward_1st)
-        // .task("at1", GPT2::attention_forward_1st, attention_context, acts_memory, ind.tensors, handover, ind.preatt, ind.qkv, B, T, C, NH)
-        // // use Loop Parallel API
-        // .task("at1", GPT2::attention_forward_1st, acts_memory, ind.tensors, handover, ind.preatt, ind.qkv, B, T, C, NH)
-        // .task("at2", GPT2::attention_forward_2nd, acts_memory, ind.tensors, handover, ind.preatt, ind.att, B, T, C, NH)
-        // .task("at3", GPT2::attention_forward_3rd, acts_memory, ind.tensors, handover, ind.atty, ind.att, ind.qkv, B, T, C, NH)
-        // .transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory); // add `handover´ when mixing with non-TornadoVM functions
-        // TornadoExecutionPlan transformer_runner_2nd = new TornadoExecutionPlan(transformer_block_2nd.snapshot());
-
-        // TaskGraph transformer_block_3rd = new TaskGraph("tb3")
-        // .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory)
-        // .transferToDevice(DataTransferMode.EVERY_EXECUTION, ind.tensors, acts_memory)
-        // .task("mm2", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.attproj, ind.atty, ind.attprojw, ind.attprojb, B, T, C, C)
-        // .task("rs1", GPT2::residual_forward, acts_memory, ind.tensors, ind.residual2, ind.residual, ind.attproj, B * T * C)
-        // .task("ln2", GPT2::layernorm_forward, params_memory, acts_memory, ind.tensors, ind.ln2, ind.ln2_mean, ind.ln2_rstd, ind.residual2, ind.ln2w, ind.ln2b, B, T, C)
-        // .task("mm3", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.fch, ind.ln2, ind.fcw, ind.fcb, B, T, C, 4 * C)
-        // .task("ge", GPT2::gelu_forward, acts_memory, ind.tensors, ind.fch_gelu, ind.fch, B * T * 4 * C)
-        // .task("mm4", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.fcproj, ind.fch_gelu, ind.fcprojw, ind.fcprojb, B, T, 4 * C, C)
-        // .task("rs2", GPT2::residual_forward, acts_memory, ind.tensors, ind.residual3, ind.residual2, ind.fcproj, B * T * C)
-        // .transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory);
-        // TornadoExecutionPlan transformer_runner_3rd = new TornadoExecutionPlan(transformer_block_3rd.snapshot());
-
-        TaskGraph transformer_block = new TaskGraph("tb")
-        .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory, acts_memory)
-        .transferToDevice(DataTransferMode.EVERY_EXECUTION, ind.tensors)
+        TaskGraph transformer_block_1st = new TaskGraph("tb1")
+        .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory)
+        .transferToDevice(DataTransferMode.EVERY_EXECUTION, ind.tensors, acts_memory)
         .task("ln1", GPT2::layernorm_forward, params_memory, acts_memory, ind.tensors, ind.ln1, ind.ln1_mean, ind.ln1_rstd, ind.residual, ind.ln1w, ind.ln1b, B, T, C)
         .task("mm1", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.qkv, ind.ln1, ind.qkvw, ind.qkvb, B, T, C, 3 * C)
+        .transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory);
+        TornadoExecutionPlan transformer_runner_1st = new TornadoExecutionPlan(transformer_block_1st.snapshot());
+
+        // prepare for Kernel API usage
+        WorkerGrid attention_grid = new WorkerGrid3D(B, T, NH);
+        GridScheduler attention_scheduler = new GridScheduler();
+        attention_scheduler.setWorkerGrid("tb2.at1", attention_grid);
+        // same grid for all attention tasks
+        // gridScheduler.setWorkerGrid("tb2.at2", attention_grid);
+        // gridScheduler.setWorkerGrid("tb2.at3", attention_grid);
+        KernelContext attention_context = new KernelContext();
+
+        TaskGraph transformer_block_2nd = new TaskGraph("tb2")
+        .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory)
+        .transferToDevice(DataTransferMode.EVERY_EXECUTION, ind.tensors, acts_memory)
         .task("at", GPT2::attention_forward, acts_memory, ind.tensors, ind.atty, ind.preatt, ind.att, ind.qkv, B, T, C, NH)
+        // use Kernel API (only attention_forward_1st)
+        .task("at1", GPT2::attention_forward_1st, attention_context, acts_memory, ind.tensors, handover, ind.preatt, ind.qkv, B, T, C, NH)
+        // use Loop Parallel API
         // .task("at1", GPT2::attention_forward_1st, acts_memory, ind.tensors, handover, ind.preatt, ind.qkv, B, T, C, NH)
-        // .task("at2", GPT2::attention_forward_2nd, acts_memory, ind.tensors, handover, ind.preatt, ind.att, B, T, C, NH)
-        // .task("at3", GPT2::attention_forward_3rd, acts_memory, ind.tensors, handover, ind.atty, ind.att, ind.qkv, B, T, C, NH)
+        .task("at2", GPT2::attention_forward_2nd, acts_memory, ind.tensors, handover, ind.preatt, ind.att, B, T, C, NH)
+        .task("at3", GPT2::attention_forward_3rd, acts_memory, ind.tensors, handover, ind.atty, ind.att, ind.qkv, B, T, C, NH)
+        .transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory); // add `handover´ when mixing with non-TornadoVM functions
+        TornadoExecutionPlan transformer_runner_2nd = new TornadoExecutionPlan(transformer_block_2nd.snapshot());
+
+        TaskGraph transformer_block_3rd = new TaskGraph("tb3")
+        .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory)
+        .transferToDevice(DataTransferMode.EVERY_EXECUTION, ind.tensors, acts_memory)
         .task("mm2", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.attproj, ind.atty, ind.attprojw, ind.attprojb, B, T, C, C)
         .task("rs1", GPT2::residual_forward, acts_memory, ind.tensors, ind.residual2, ind.residual, ind.attproj, B * T * C)
         .task("ln2", GPT2::layernorm_forward, params_memory, acts_memory, ind.tensors, ind.ln2, ind.ln2_mean, ind.ln2_rstd, ind.residual2, ind.ln2w, ind.ln2b, B, T, C)
@@ -1370,9 +1351,28 @@ public class GPT2 {
         .task("ge", GPT2::gelu_forward, acts_memory, ind.tensors, ind.fch_gelu, ind.fch, B * T * 4 * C)
         .task("mm4", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.fcproj, ind.fch_gelu, ind.fcprojw, ind.fcprojb, B, T, 4 * C, C)
         .task("rs2", GPT2::residual_forward, acts_memory, ind.tensors, ind.residual3, ind.residual2, ind.fcproj, B * T * C)
-        .transferToHost(DataTransferMode.UNDER_DEMAND, acts_memory);
-        TornadoExecutionPlan transformer_runner = new TornadoExecutionPlan(transformer_block.snapshot());
-        TornadoExecutionResult transformer_result = null;
+        .transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory);
+        TornadoExecutionPlan transformer_runner_3rd = new TornadoExecutionPlan(transformer_block_3rd.snapshot());
+
+        // TaskGraph transformer_block = new TaskGraph("tb")
+        // .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory, acts_memory)
+        // .transferToDevice(DataTransferMode.EVERY_EXECUTION, ind.tensors)
+        // .task("ln1", GPT2::layernorm_forward, params_memory, acts_memory, ind.tensors, ind.ln1, ind.ln1_mean, ind.ln1_rstd, ind.residual, ind.ln1w, ind.ln1b, B, T, C)
+        // .task("mm1", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.qkv, ind.ln1, ind.qkvw, ind.qkvb, B, T, C, 3 * C)
+        // .task("at", GPT2::attention_forward, acts_memory, ind.tensors, ind.atty, ind.preatt, ind.att, ind.qkv, B, T, C, NH)
+        // // .task("at1", GPT2::attention_forward_1st, acts_memory, ind.tensors, handover, ind.preatt, ind.qkv, B, T, C, NH)
+        // // .task("at2", GPT2::attention_forward_2nd, acts_memory, ind.tensors, handover, ind.preatt, ind.att, B, T, C, NH)
+        // // .task("at3", GPT2::attention_forward_3rd, acts_memory, ind.tensors, handover, ind.atty, ind.att, ind.qkv, B, T, C, NH)
+        // .task("mm2", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.attproj, ind.atty, ind.attprojw, ind.attprojb, B, T, C, C)
+        // .task("rs1", GPT2::residual_forward, acts_memory, ind.tensors, ind.residual2, ind.residual, ind.attproj, B * T * C)
+        // .task("ln2", GPT2::layernorm_forward, params_memory, acts_memory, ind.tensors, ind.ln2, ind.ln2_mean, ind.ln2_rstd, ind.residual2, ind.ln2w, ind.ln2b, B, T, C)
+        // .task("mm3", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.fch, ind.ln2, ind.fcw, ind.fcb, B, T, C, 4 * C)
+        // .task("ge", GPT2::gelu_forward, acts_memory, ind.tensors, ind.fch_gelu, ind.fch, B * T * 4 * C)
+        // .task("mm4", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.fcproj, ind.fch_gelu, ind.fcprojw, ind.fcprojb, B, T, 4 * C, C)
+        // .task("rs2", GPT2::residual_forward, acts_memory, ind.tensors, ind.residual3, ind.residual2, ind.fcproj, B * T * C)
+        // .transferToHost(DataTransferMode.UNDER_DEMAND, acts_memory);
+        // TornadoExecutionPlan transformer_runner = new TornadoExecutionPlan(transformer_block.snapshot());
+        // TornadoExecutionResult transformer_result = null;
 
         // forward pass
         long t0 = System.currentTimeMillis();
@@ -1380,8 +1380,8 @@ public class GPT2 {
         for (int l = 0 ; l < L ; l++) {
             ind.updateForLayer(l);
             // now do the forward pass
-            // transformer_runner_1st.execute();
-            // transformer_runner_2nd.execute();
+            transformer_runner_1st.execute();
+            transformer_runner_2nd.execute();
             // transformer_runner_2nd.withGridScheduler(attention_scheduler).execute();
 
             // for (int i = 0 ; i < B * T * NH ; i++) System.err.println(handover.get(i) + " "); System.exit(0);
@@ -1395,15 +1395,15 @@ public class GPT2 {
             // attention_forward_2nd(handover, l_preatt, l_att, B, T, C, NH);
             // attention_forward_3rd(handover, l_atty, l_att, l_qkv, B, T, C, NH);
 
-            // transformer_runner_3rd.execute();
-            transformer_result = transformer_runner.execute();
+            transformer_runner_3rd.execute();
+            // transformer_result = transformer_runner.execute();
         }
-        transformer_result.transferToHost(acts_memory);
+        // transformer_result.transferToHost(acts_memory);
         try {
-            // transformer_runner_1st.close();
-            // transformer_runner_2nd.close();
-            // transformer_runner_3rd.close();
-            transformer_runner.close();
+            transformer_runner_1st.close();
+            transformer_runner_2nd.close();
+            transformer_runner_3rd.close();
+            // transformer_runner.close();
         } catch (TornadoExecutionPlanException e) { throw new UnexpectedException(null); }
 
         int residual = acts.residual3 + (L - 1) * B * T * C; // last residual is in residual3
