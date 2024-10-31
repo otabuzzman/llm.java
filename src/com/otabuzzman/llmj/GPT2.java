@@ -1309,41 +1309,13 @@ public class GPT2 {
         }
 
         TensorIndices ind = new TensorIndices(params, acts, B, T, C, NH);
-        // FloatArray handover = new FloatArray(B * T * NH); // to pass data between attention layers
 
-        // TaskGraph transformer_block_1st = new TaskGraph("tb1")
-        // .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory)
-        // .transferToDevice(DataTransferMode.EVERY_EXECUTION, ind.tensors, acts_memory)
-        // .task("ln1", GPT2::layernorm_forward, params_memory, acts_memory, ind.tensors, ind.ln1, ind.ln1_mean, ind.ln1_rstd, ind.residual, ind.ln1w, ind.ln1b, B, T, C)
+        TaskGraph transformer_block = new TaskGraph("tb")
+        .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory)
+        .transferToDevice(DataTransferMode.EVERY_EXECUTION, acts_memory, ind.tensors)
+        .task("ln1", GPT2::layernorm_forward, params_memory, acts_memory, ind.tensors, ind.ln1, ind.ln1_mean, ind.ln1_rstd, ind.residual, ind.ln1w, ind.ln1b, B, T, C)
         // .task("mm1", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.qkv, ind.ln1, ind.qkvw, ind.qkvb, B, T, C, 3 * C)
-        // .transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory);
-        // TornadoExecutionPlan transformer_runner_1st = new TornadoExecutionPlan(transformer_block_1st.snapshot());
-
-        // // prepare for Kernel API usage
-        // WorkerGrid attention_grid = new WorkerGrid3D(B, T, NH);
-        // GridScheduler attention_scheduler = new GridScheduler();
-        // attention_scheduler.setWorkerGrid("tb2.at1", attention_grid);
-        // // same grid for all attention tasks
-        // // gridScheduler.setWorkerGrid("tb2.at2", attention_grid);
-        // // gridScheduler.setWorkerGrid("tb2.at3", attention_grid);
-        // KernelContext attention_context = new KernelContext();
-
-        // TaskGraph transformer_block_2nd = new TaskGraph("tb2")
-        // .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory)
-        // .transferToDevice(DataTransferMode.EVERY_EXECUTION, ind.tensors, acts_memory)
         // .task("at", GPT2::attention_forward, acts_memory, ind.tensors, ind.atty, ind.preatt, ind.att, ind.qkv, B, T, C, NH)
-        // // use Kernel API (only attention_forward_1st)
-        // .task("at1", GPT2::attention_forward_1st, attention_context, acts_memory, ind.tensors, handover, ind.preatt, ind.qkv, B, T, C, NH)
-        // // use Loop Parallel API
-        // // .task("at1", GPT2::attention_forward_1st, acts_memory, ind.tensors, handover, ind.preatt, ind.qkv, B, T, C, NH)
-        // .task("at2", GPT2::attention_forward_2nd, acts_memory, ind.tensors, handover, ind.preatt, ind.att, B, T, C, NH)
-        // .task("at3", GPT2::attention_forward_3rd, acts_memory, ind.tensors, handover, ind.atty, ind.att, ind.qkv, B, T, C, NH)
-        // .transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory); // add `handover´ when mixing with non-TornadoVM functions
-        // TornadoExecutionPlan transformer_runner_2nd = new TornadoExecutionPlan(transformer_block_2nd.snapshot());
-
-        // TaskGraph transformer_block_3rd = new TaskGraph("tb3")
-        // .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory)
-        // .transferToDevice(DataTransferMode.EVERY_EXECUTION, ind.tensors, acts_memory)
         // .task("mm2", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.attproj, ind.atty, ind.attprojw, ind.attprojb, B, T, C, C)
         // .task("rs1", GPT2::residual_forward, acts_memory, ind.tensors, ind.residual2, ind.residual, ind.attproj, B * T * C)
         // .task("ln2", GPT2::layernorm_forward, params_memory, acts_memory, ind.tensors, ind.ln2, ind.ln2_mean, ind.ln2_rstd, ind.residual2, ind.ln2w, ind.ln2b, B, T, C)
@@ -1351,58 +1323,65 @@ public class GPT2 {
         // .task("ge", GPT2::gelu_forward, acts_memory, ind.tensors, ind.fch_gelu, ind.fch, B * T * 4 * C)
         // .task("mm4", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.fcproj, ind.fch_gelu, ind.fcprojw, ind.fcprojb, B, T, 4 * C, C)
         // .task("rs2", GPT2::residual_forward, acts_memory, ind.tensors, ind.residual3, ind.residual2, ind.fcproj, B * T * C)
-        // .transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory);
-        // TornadoExecutionPlan transformer_runner_3rd = new TornadoExecutionPlan(transformer_block_3rd.snapshot());
-
-        TaskGraph transformer_block = new TaskGraph("tb")
-        .transferToDevice(DataTransferMode.FIRST_EXECUTION, params_memory, acts_memory)
-        .transferToDevice(DataTransferMode.EVERY_EXECUTION, ind.tensors)
-        .task("ln1", GPT2::layernorm_forward, params_memory, acts_memory, ind.tensors, ind.ln1, ind.ln1_mean, ind.ln1_rstd, ind.residual, ind.ln1w, ind.ln1b, B, T, C)
-        .task("mm1", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.qkv, ind.ln1, ind.qkvw, ind.qkvb, B, T, C, 3 * C)
-        .task("at", GPT2::attention_forward, acts_memory, ind.tensors, ind.atty, ind.preatt, ind.att, ind.qkv, B, T, C, NH)
-        // .task("at1", GPT2::attention_forward_1st, acts_memory, ind.tensors, handover, ind.preatt, ind.qkv, B, T, C, NH)
-        // .task("at2", GPT2::attention_forward_2nd, acts_memory, ind.tensors, handover, ind.preatt, ind.att, B, T, C, NH)
-        // .task("at3", GPT2::attention_forward_3rd, acts_memory, ind.tensors, handover, ind.atty, ind.att, ind.qkv, B, T, C, NH)
-        .task("mm2", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.attproj, ind.atty, ind.attprojw, ind.attprojb, B, T, C, C)
-        .task("rs1", GPT2::residual_forward, acts_memory, ind.tensors, ind.residual2, ind.residual, ind.attproj, B * T * C)
-        .task("ln2", GPT2::layernorm_forward, params_memory, acts_memory, ind.tensors, ind.ln2, ind.ln2_mean, ind.ln2_rstd, ind.residual2, ind.ln2w, ind.ln2b, B, T, C)
-        .task("mm3", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.fch, ind.ln2, ind.fcw, ind.fcb, B, T, C, 4 * C)
-        .task("ge", GPT2::gelu_forward, acts_memory, ind.tensors, ind.fch_gelu, ind.fch, B * T * 4 * C)
-        .task("mm4", GPT2::matmul_forward, params_memory, acts_memory, ind.tensors, ind.fcproj, ind.fch_gelu, ind.fcprojw, ind.fcprojb, B, T, 4 * C, C)
-        .task("rs2", GPT2::residual_forward, acts_memory, ind.tensors, ind.residual3, ind.residual2, ind.fcproj, B * T * C)
-        .transferToHost(DataTransferMode.UNDER_DEMAND, acts_memory);
+        .transferToHost(DataTransferMode.EVERY_EXECUTION, acts_memory);
         TornadoExecutionPlan transformer_runner = new TornadoExecutionPlan(transformer_block.snapshot());
-        TornadoExecutionResult transformer_result = null;
 
         // forward pass
         long t0 = System.currentTimeMillis();
         encoder_forward(acts.encoded, params.wte, params.wpe, B, T, C); // encoding goes into residual[0]
         for (int l = 0 ; l < L ; l++) {
+            // update indices for layer tasks
             ind.updateForLayer(l);
-            // now do the forward pass
-            // transformer_runner_1st.execute();
-            // transformer_runner_2nd.execute();
-            // transformer_runner_2nd.withGridScheduler(attention_scheduler).execute();
 
-            // for (int i = 0 ; i < B * T * NH ; i++) System.err.println(handover.get(i) + " "); System.exit(0);
+            // update indices for layer methods
+            int residual = ind.tensors.get(ind.residual);
+            int l_ln1w = ind.tensors.get(ind.ln1w);
+            int l_ln1b = ind.tensors.get(ind.ln1b);
+            int l_qkvw = ind.tensors.get(ind.qkvw);
+            int l_qkvb = ind.tensors.get(ind.qkvb);
+            int l_attprojw = ind.tensors.get(ind.attprojw);
+            int l_attprojb = ind.tensors.get(ind.attprojb);
+            int l_ln2w = ind.tensors.get(ind.ln2w);
+            int l_ln2b = ind.tensors.get(ind.ln2b);
+            int l_fcw = ind.tensors.get(ind.fcw);
+            int l_fcb = ind.tensors.get(ind.fcb);
+            int l_fcprojw = ind.tensors.get(ind.fcprojw);
+            int l_fcprojb = ind.tensors.get(ind.fcprojb);
 
+            // get the pointers of the activations for this layer
+            int l_ln1 = ind.tensors.get(ind.ln1);
+            int l_ln1_mean = ind.tensors.get(ind.ln1_mean);
+            int l_ln1_rstd = ind.tensors.get(ind.ln1_rstd);
+            int l_qkv = ind.tensors.get(ind.qkv);
             int l_atty = ind.tensors.get(ind.atty);
             int l_preatt = ind.tensors.get(ind.preatt);
             int l_att = ind.tensors.get(ind.att);
-            int l_qkv = ind.tensors.get(ind.qkv);
-            // attention_forward(l_atty, l_preatt, l_att, l_qkv, B, T, C, NH);
-            // attention_forward_1st(handover, l_preatt, l_qkv, B, T, C, NH);
-            // attention_forward_2nd(handover, l_preatt, l_att, B, T, C, NH);
-            // attention_forward_3rd(handover, l_atty, l_att, l_qkv, B, T, C, NH);
+            int l_attproj = ind.tensors.get(ind.attproj);
+            int l_residual2 = ind.tensors.get(ind.residual2);
+            int l_ln2 = ind.tensors.get(ind.ln2);
+            int l_ln2_mean = ind.tensors.get(ind.ln2_mean);
+            int l_ln2_rstd = ind.tensors.get(ind.ln2_rstd);
+            int l_fch = ind.tensors.get(ind.fch);
+            int l_fch_gelu = ind.tensors.get(ind.fch_gelu);
+            int l_fcproj = ind.tensors.get(ind.fcproj);
+            int l_residual3 = ind.tensors.get(ind.residual3);
 
-            // transformer_runner_3rd.execute();
-            transformer_result = transformer_runner.execute();
+            // run layers in task graph
+            transformer_runner.execute();
+
+            // run remaining layer methods (not in task graph)
+            // layernorm_forward(l_ln1, l_ln1_mean, l_ln1_rstd, residual, l_ln1w, l_ln1b, B, T, C);
+            matmulForward.apply(l_qkv, l_ln1, l_qkvw, l_qkvb, B, T, C, 3 * C);
+            attention_forward(l_atty, l_preatt, l_att, l_qkv, B, T, C, NH);
+            matmulForward.apply(l_attproj, l_atty, l_attprojw, l_attprojb, B, T, C, C);
+            residual_forward(l_residual2, residual, l_attproj, B * T * C);
+            layernorm_forward(l_ln2, l_ln2_mean, l_ln2_rstd, l_residual2, l_ln2w, l_ln2b, B, T, C);
+            matmulForward.apply(l_fch, l_ln2, l_fcw, l_fcb, B, T, C, 4 * C);
+            gelu_forward(l_fch_gelu, l_fch, B * T * 4 * C);
+            matmulForward.apply(l_fcproj, l_fch_gelu, l_fcprojw, l_fcprojb, B, T, 4 * C, C);
+            residual_forward(l_residual3, l_residual2, l_fcproj, B * T * C);
         }
-        transformer_result.transferToHost(acts_memory);
-        try {
-            // transformer_runner_1st.close();
-            // transformer_runner_2nd.close();
-            // transformer_runner_3rd.close();
+         try {
             transformer_runner.close();
         } catch (TornadoExecutionPlanException e) { throw new UnexpectedException(null); }
 
