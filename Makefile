@@ -9,12 +9,13 @@ GPT2BINS = \
 	gpt2_124M_debug_state.bin \
 	gpt2_tokenizer.bin \
 
-.PHONY: compile run
+.PHONY: compile test
 
 compile:
 ifdef winos
 	javac \
-		--enable-preview \
+		-classpath "%TORNADO_SDK%\share\java\tornado\*" \
+		-g:vars --enable-preview \
 		--add-modules jdk.incubator.vector \
 		-target 21 -source 21 \
 		-Xlint:preview -proc:full \
@@ -22,7 +23,8 @@ ifdef winos
 		src\com\otabuzzman\llmj\*.java
 else
 	javac \
-		--enable-preview \
+		-classpath "${TORNADO_SDK}/share/java/tornado/*" \
+		-g:vars --enable-preview \
 		--add-modules jdk.incubator.vector \
 		-target 21 -source 21 \
 		-Xlint:preview -proc:full \
@@ -30,8 +32,12 @@ else
 		src/com/otabuzzman/llmj/*.java
 endif
 
-run: $(GPT2BINS)
-	java --enable-preview --add-modules jdk.incubator.vector -DUseVectorAPI=true --classpath bin com.otabuzzman.llmj.TestGpt2
+test: $(GPT2BINS)
+ifdef winos
+	python %TORNADO_SDK%\bin\tornado --jvm="-Dtb.device=1:0 -Dol.device=2:0 -DUseVectorAPI=true -Dtornado.device.memory=2GB" --classpath bin com.otabuzzman.llmj.TestGpt2
+else
+	tornado --jvm="-Dtb.device=1:0 -Dol.device=2:0 -DUseVectorAPI=true -Dtornado.device.memory=2GB" --classpath bin com.otabuzzman.llmj.TestGpt2
+endif
 
 
 
