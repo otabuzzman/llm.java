@@ -14,7 +14,7 @@ GPT2BINS = \
 compile:
 ifdef winos
 	javac \
-		-classpath "..\TornadoVM\bin\sdk\share\java\tornado\*" \
+		-classpath "%TORNADO_SDK%\share\java\tornado\*" \
 		-g:vars --enable-preview \
 		--add-modules jdk.incubator.vector \
 		-target 21 -source 21 \
@@ -23,7 +23,7 @@ ifdef winos
 		src\com\otabuzzman\llmj\*.java
 else
 	javac \
-		-classpath "../TornadoVM/bin/sdk/share/java/tornado/*" \
+		-classpath "${TORNADO_SDK}/share/java/tornado/*" \
 		-g:vars --enable-preview \
 		--add-modules jdk.incubator.vector \
 		-target 21 -source 21 \
