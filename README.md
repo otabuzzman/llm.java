@@ -6,7 +6,7 @@ A Java port of Andrej Karpathy‘s llm.c.
 
 - Clone this repository, open in VS Code, build and run the executables for testing and training.
 
-The [samples.md](samples-md) file provides the output of llm.java captured from the first working version with Java Stream parallelization on a Lenovo T15p notebook. There is a [blog](https://otabuzzman.com/posts/tornado-llmc/) on parallelization with [TornadoVM](https://www.tornadovm.org/).
+The [samples.md](samples.md) file provides the output of llm.java captured from the first working version with Java Stream parallelization on a Lenovo T15p notebook. There is a [blog](https://otabuzzman.com/posts/tornado-llmc/) on parallelization with [TornadoVM](https://www.tornadovm.org/).
 
 ## Acknowledgements
 
